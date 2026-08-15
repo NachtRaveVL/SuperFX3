@@ -7,15 +7,21 @@
 #include "fx_core.h"
 
 uint8_t SuperFx::flags_low() const {
-    return (state_.flags.zero << 1) | (state_.flags.carry << 2) |
-           (state_.flags.sign << 3) | (state_.flags.overflow << 4) |
-           (state_.flags.running << 5) | (state_.flags.rom_read_pending << 6);
+    return (state_.flags.zero << 1) |
+           (state_.flags.carry << 2) |
+           (state_.flags.sign << 3) |
+           (state_.flags.overflow << 4) |
+           (state_.flags.running << 5) |
+           (state_.flags.rom_read_pending << 6);
 }
 
 uint8_t SuperFx::flags_high() const {
-    return (state_.flags.alt1 << 0) | (state_.flags.alt2 << 1) |
-           (state_.flags.imm_low << 2) | (state_.flags.imm_high << 3) |
-           (state_.flags.prefix << 4) | (state_.flags.irq << 7);
+    return (state_.flags.alt1 << 0) |
+           (state_.flags.alt2 << 1) |
+           (state_.flags.imm_low << 2) |
+           (state_.flags.imm_high << 3) |
+           (state_.flags.prefix << 4) |
+           (state_.flags.irq << 7);
 }
 
 // -------------------------------------------------------------
@@ -36,8 +42,7 @@ uint8_t SuperFx::cpu_read(uint16_t addr) {
 
         // FX3 has no completion IRQ.
         // R15 may be polled while running.
-        if (config_.chip == FxChip::FX3 && (addr == 0x301E || addr == 0x301F))
-            allowed = true;
+        if (config_.chip == FxChip::FX3 && (addr == 0x301E || addr == 0x301F)) allowed = true;
 
         if (!allowed) return 0;
     }
@@ -100,8 +105,7 @@ void SuperFx::cpu_write(uint16_t addr, uint8_t value) {
     addr &= 0x33FF;
 
     // While executing, SNES may only modify SFR and SCMR.
-    if (state_.flags.running && addr != 0x3030 && addr != 0x303A)
-        return;
+    if (state_.flags.running && addr != 0x3030 && addr != 0x303A) return;
 
     // R0-R15
     if (addr >= 0x3000 && addr <= 0x301F) {

@@ -42,8 +42,7 @@ uint8_t SuperFx::blocked_rom_value(uint32_t addr) const {
 }
 
 uint8_t SuperFx::cpu_rom_read(uint32_t addr) {
-    if (!rom_access_allowed())
-        return blocked_rom_value(addr);
+    if (!rom_access_allowed()) return blocked_rom_value(addr);
 
     return bus_.rom_read(bus_.context, addr);
 }
@@ -76,8 +75,7 @@ void SuperFx::wait_for_ram_access() {
 }
 
 void SuperFx::update_running_state() {
-    stopped_ =
-        !state_.flags.running || wait_for_rom_access_ || wait_for_ram_access_;
+    stopped_ = !state_.flags.running || wait_for_rom_access_ || wait_for_ram_access_;
 }
 
 // -------------------------------------------------------------
@@ -113,8 +111,8 @@ void SuperFx::step(uint32_t cycles) {
         if (state_.rom_delay == 0) {
             wait_for_rom_access();
 
-            state_.rom_read_buffer = bus_.rom_read(
-                bus_.context, ((uint32_t)state_.rom_bank << 16) | state_.r[14]);
+            state_.rom_read_buffer = bus_.rom_read(bus_.context,
+                                                   ((uint32_t)state_.rom_bank << 16) | state_.r[14]);
             state_.flags.rom_read_pending = false;
         }
     }
@@ -127,10 +125,9 @@ void SuperFx::step(uint32_t cycles) {
         if (state_.ram_delay == 0) {
             wait_for_ram_access();
 
-            bus_.ram_write(
-                bus_.context,
-                ((uint32_t)state_.ram_bank << 16) | state_.ram_write_address,
-                state_.ram_write_value);
+            bus_.ram_write(bus_.context,
+                           ((uint32_t)state_.ram_bank << 16) | state_.ram_write_address,
+                           state_.ram_write_value);
         }
     }
 }
@@ -144,8 +141,7 @@ uint8_t SuperFx::read_ram(uint16_t address) {
     wait_ram_operation();
     wait_for_ram_access();
 
-    return bus_.ram_read(bus_.context,
-                         ((uint32_t)state_.ram_bank << 16) | address);
+    return bus_.ram_read(bus_.context, ((uint32_t)state_.ram_bank << 16) | address);
 }
 
 void SuperFx::write_ram(uint16_t address, uint8_t value) {
@@ -179,8 +175,7 @@ uint8_t SuperFx::read_program_byte() {
         wait_for_rom_access();
 
         step(state_.clock_select ? 5 : 6);
-        return bus_.rom_read(bus_.context,
-                             ((uint32_t)bank << 16) | state_.r[15]);
+        return bus_.rom_read(bus_.context, ((uint32_t)bank << 16) | state_.r[15]);
     } else {
         // Program execution outside the ROM bank range.
         // Only banks $70-$71 map to GSU RAM.
@@ -190,15 +185,10 @@ uint8_t SuperFx::read_program_byte() {
 
         step(state_.clock_select ? 5 : 6);
 
-        if (bank == 0x70 || bank == 0x71) {
-            return bus_.ram_read(
-                bus_.context,
-
-                ((uint32_t)(bank - 0x70) << 16) | state_.r[15]);
-        }
-
-        // Unmapped GSU address.
-        return 0x00;
+        if (bank == 0x70 || bank == 0x71)
+            return bus_.ram_read(bus_.context,
+                                 ((uint32_t)(bank - 0x70) << 16) | state_.r[15]);
+        return 0x00; // Unmapped GSU address.
     }
 }
 
@@ -211,25 +201,20 @@ void SuperFx::fill_cache_line(uint16_t cache_addr) {
         wait_for_rom_access();
 
         const uint32_t base = ((uint32_t)bank << 16) + state_.cache_base + dest;
-        for (unsigned i = 0; i < 16; i++) {
+        for (unsigned i = 0; i < 16; i++)
             cache_[dest + i] = bus_.rom_read(bus_.context, base + i);
-        }
-
     } else {
         wait_ram_operation();
         wait_for_ram_access();
 
         if (bank == 0x70 || bank == 0x71) {
-            const uint32_t base =
-                ((uint32_t)(bank - 0x70) << 16) + state_.cache_base + dest;
-            for (unsigned i = 0; i < 16; i++) {
+            const uint32_t base = ((uint32_t)(bank - 0x70) << 16) + state_.cache_base + dest;
+            for (unsigned i = 0; i < 16; i++)
                 cache_[dest + i] = bus_.ram_read(bus_.context, base + i);
-            }
         } else {
             // Unmapped program bank.
-            for (unsigned i = 0; i < 16; i++) {
+            for (unsigned i = 0; i < 16; i++)
                 cache_[dest + i] = 0x00;
-            }
         }
     }
 

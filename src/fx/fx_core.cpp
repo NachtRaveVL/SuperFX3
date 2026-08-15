@@ -6,6 +6,7 @@
  */
 
 #include <cstring>
+
 #include "fx_core.h"
 
 void SuperFx::init(const FxConfig& config, const FxBus& bus) {
@@ -37,8 +38,7 @@ void SuperFx::reset() {
     last_master_clock_ = 0;
     target_cycles_ = 0;
 
-    if (bus_.set_irq)
-        bus_.set_irq(bus_.context, false);
+    if (bus_.set_irq) bus_.set_irq(bus_.context, false);
 }
 
 void SuperFx::execute() {
@@ -102,6 +102,4 @@ void SuperFx::reset_prefix() {
     state_.dst_reg = 0;
 }
 
-void SuperFx::invalidate_cache() {
-    std::memset(cache_valid_, 0, sizeof(cache_valid_));
-}
+void SuperFx::invalidate_cache() { std::memset(cache_valid_, 0, sizeof(cache_valid_)); }

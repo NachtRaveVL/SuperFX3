@@ -109,7 +109,7 @@ void SuperFx::execute_opcode(uint8_t opcode) {
                     break;
 
                 default:
-                    // $30-$3B : STW / STB
+                    // $30-$3B: STW / STB
                     op_store(reg);
                     break;
             }
@@ -135,7 +135,7 @@ void SuperFx::execute_opcode(uint8_t opcode) {
                     break;
 
                 default:
-                    // $40-$4B : LDW / LDB
+                    // $40-$4B: LDW / LDB
                     op_load(reg);
                     break;
             }
@@ -197,7 +197,7 @@ void SuperFx::execute_opcode(uint8_t opcode) {
                 case 0xB:
                 case 0xC:
                 case 0xD:
-                    // $98-$9D : JMP Rn / LJMP Rn
+                    // $98-$9D: JMP Rn / LJMP Rn
                     op_jmp(reg);
                     break;
 
@@ -278,9 +278,7 @@ void SuperFx::op_stop() {
 // -------------------------------------------------------------
 // $01: NOP
 // -------------------------------------------------------------
-void SuperFx::op_nop() {
-    reset_prefix();
-}
+void SuperFx::op_nop() { reset_prefix(); }
 
 // -------------------------------------------------------------
 // $02: CACHE
@@ -380,9 +378,8 @@ void SuperFx::op_store(uint8_t reg) {
     const uint16_t value = read_src();
     write_ram(state_.ram_address, (uint8_t)value);
 
-    if (!state_.flags.alt1) {
+    if (!state_.flags.alt1)
         write_ram(state_.ram_address ^ 1, (uint8_t)(value >> 8));
-    }
 
     reset_prefix();
 }
@@ -395,9 +392,8 @@ void SuperFx::op_loop() {
     state_.flags.zero = state_.r[12] == 0;
     state_.flags.sign = (state_.r[12] & 0x8000) != 0;
 
-    if (!state_.flags.zero) {
+    if (!state_.flags.zero)
         write_reg(15, state_.r[13]);
-    }
 
     reset_prefix();
 }
@@ -437,9 +433,8 @@ void SuperFx::op_load(uint8_t reg) {
     state_.ram_address = state_.r[reg];
 
     uint16_t value = read_ram(state_.ram_address);
-    if (!state_.flags.alt1) {
+    if (!state_.flags.alt1)
         value |= (uint16_t)read_ram(state_.ram_address ^ 0x0001) << 8;
-    }
 
     write_dst(value);
 
@@ -553,8 +548,7 @@ void SuperFx::op_sub_compare(uint8_t reg) {
     int32_t result = (int32_t)src - (int32_t)operand;
 
     // SBC
-    if (state_.flags.alt1 && !state_.flags.alt2 && !state_.flags.carry)
-        result--;
+    if (state_.flags.alt1 && !state_.flags.alt2 && !state_.flags.carry) result--;
 
     const uint16_t result16 = (uint16_t)result;
     state_.flags.carry = result >= 0;
@@ -563,8 +557,7 @@ void SuperFx::op_sub_compare(uint8_t reg) {
     state_.flags.zero = result16 == 0;
 
     // ALT3 = CMP: flags only.
-    if (!(state_.flags.alt1 && state_.flags.alt2))
-        write_dst(result16);
+    if (!(state_.flags.alt1 && state_.flags.alt2)) write_dst(result16);
 
     reset_prefix();
 }
@@ -576,8 +569,8 @@ void SuperFx::op_sub_compare(uint8_t reg) {
 // -------------------------------------------------------------
 void SuperFx::op_and_bic(uint8_t reg) {
     const uint16_t operand = state_.flags.alt2 ? reg : state_.r[reg];
-    uint16_t value = state_.flags.alt1 ? read_src() & ~operand : // BIC
-                                         read_src() & operand; // AND
+    uint16_t value = state_.flags.alt1 ? read_src() & ~operand // BIC
+                                       : read_src() & operand; // AND
 
     write_dst(value);
 
@@ -761,7 +754,7 @@ void SuperFx::op_fmult_lmult() {
 void SuperFx::op_ibt_sms_lms(uint8_t reg) {
     reg &= 0x0F;
 
-    if (state_.flags.alt1) { 
+    if (state_.flags.alt1) {
         // LMS Load word from RAM using short address.
         // Operand represents WORD address, so left shifted.
         state_.ram_address = (uint16_t)read_operand() << 1;
@@ -836,8 +829,8 @@ void SuperFx::op_or_xor(uint8_t reg) {
     reg &= 0x0F;
 
     const uint16_t operand = state_.flags.alt2 ? reg : state_.r[reg];
-    uint16_t value = state_.flags.alt1 ? read_src() ^ operand : // XOR
-                                         read_src() | operand;  // OR
+    uint16_t value = state_.flags.alt1 ? read_src() ^ operand // XOR
+                                       : read_src() | operand; // OR
 
     write_dst(value);
 

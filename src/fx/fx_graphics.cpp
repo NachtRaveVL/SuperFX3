@@ -40,22 +40,17 @@ static constexpr uint8_t FX3_REGION_TILES = 9;
 static constexpr uint8_t FX3_CLEAR_PATTERN[64] = {
     0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00,
     0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00,
-
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-
     0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF,
     0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF
 };
 
 uint8_t SuperFx::get_color(uint8_t value) {
-    if (state_.color_high_nibble)
-        return (state_.color & 0xF0) | (value >> 4);
-    if (state_.color_freeze_high)
-        return (state_.color & 0xF0) | (value & 0x0F);
+    if (state_.color_high_nibble) return (state_.color & 0xF0) | (value >> 4);
+    if (state_.color_freeze_high) return (state_.color & 0xF0) | (value & 0x0F);
     return value;
 }
 
@@ -77,7 +72,6 @@ uint16_t SuperFx::get_tile_index(uint8_t x, uint8_t y) {
 
 uint32_t SuperFx::get_tile_address(uint8_t x, uint8_t y) {
     const uint16_t tile = get_tile_index(x, y);
-
     return ((uint32_t)state_.screen_base << 10) +
            ((uint32_t)tile * ((uint32_t)state_.plot_bpp << 3)) +
            ((y & 0x07) * 2);
@@ -233,8 +227,7 @@ void __not_in_flash_func(SuperFx::fx3_chunky_to_planar)(uint8_t region) {
     const uint8_t first_x_tile = region * FX3_REGION_TILES;
     const uint8_t last_x_tile = first_x_tile + FX3_REGION_TILES;
 
-    if (last_x_tile > FX3_X_TILES)
-        return;
+    if (last_x_tile > FX3_X_TILES) return;
 
     uint8_t pixels[8];
     uint8_t planes[8];

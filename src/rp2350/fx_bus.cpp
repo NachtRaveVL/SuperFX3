@@ -10,7 +10,6 @@
 
 static uint8_t fx_ram_read(void* context, uint32_t address) {
     auto* ctx = static_cast<Rp2350FxBusContext*>(context);
-
     if (!ctx->ram || address >= ctx->ram_size) return 0xFF;
 
     return ctx->ram[address];
@@ -18,7 +17,6 @@ static uint8_t fx_ram_read(void* context, uint32_t address) {
 
 static void fx_ram_write(void* context, uint32_t address, uint8_t value) {
     auto* ctx = static_cast<Rp2350FxBusContext*>(context);
-
     if (!ctx->ram || address >= ctx->ram_size) return;
 
     ctx->ram[address] = value;
@@ -26,7 +24,6 @@ static void fx_ram_write(void* context, uint32_t address, uint8_t value) {
 
 static uint8_t fx_rom_read(void* context, uint32_t address) {
     auto* ctx = static_cast<Rp2350FxBusContext*>(context);
-
     if (address >= ctx->rom_size) return 0xFF;
 
     return cart_rom_read(context, address);
