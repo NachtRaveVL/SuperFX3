@@ -957,7 +957,7 @@ void SuperFx::op_iwt_lm_sm(uint8_t reg) {
 }
 
 void SuperFx::unimplemented(uint8_t opcode) {
-    static_cast<void>(opcode);
+    (void)opcode;
     state_.flags.running = false;
     update_running_state();
 }
