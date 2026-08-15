@@ -24,18 +24,15 @@ static constexpr uint16_t FX3_WIDTH = 216;
 static constexpr uint16_t FX3_HEIGHT = 144;
 static constexpr uint8_t FX3_X_TILES = FX3_WIDTH / 8;
 static constexpr uint8_t FX3_Y_TILES = FX3_HEIGHT / 8;
-
-static constexpr uint32_t FX3_CHUNKY_BASE = 0x00000;
-static constexpr uint32_t FX3_PLANAR_BASE = 0x10000;
-
-static constexpr Fx3Framebuffer FX3_FB = {FX3_CHUNKY_BASE, FX3_WIDTH, FX3_PLANAR_BASE};
-
 // GSU ScreenHeight=160 means each X tile column contains 20 tiles,
 // even though FX3 only uses the first 18 here.
 static constexpr uint8_t FX3_TILE_Y_STRIDE = 20;
-
 // A/B/C each cover nine tile columns = 72 pixels.
 static constexpr uint8_t FX3_REGION_TILES = 9;
+
+static constexpr uint32_t FX3_CHUNKY_BASE = 0x00000;
+static constexpr uint32_t FX3_PLANAR_BASE = 0x10000;
+static constexpr Fx3Framebuffer FX3_FB = {FX3_CHUNKY_BASE, FX3_WIDTH, FX3_PLANAR_BASE};
 
 static constexpr uint8_t FX3_CLEAR_PATTERN[64] = {
     0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00,
@@ -113,9 +110,7 @@ bool SuperFx::is_transparent_pixel() const {
 }
 
 void SuperFx::draw_pixel(uint8_t x, uint8_t y) {
-    if (!state_.plot_transparent && is_transparent_pixel()) {
-        return;
-    }
+    if (!state_.plot_transparent && is_transparent_pixel()) return;
 
     uint8_t color = state_.color;
     if (state_.plot_dither && state_.plot_bpp != 8) {
@@ -123,17 +118,15 @@ void SuperFx::draw_pixel(uint8_t x, uint8_t y) {
         color &= 0x0F;
     }
 
-    if (state_.primary_cache.x != (x & 0xF8) || state_.primary_cache.y != y) {
+    if (state_.primary_cache.x != (x & 0xF8) || state_.primary_cache.y != y)
         flush_primary_cache(x, y);
-    }
 
     const uint8_t bit = (x & 7) ^ 7;
     state_.primary_cache.pixels[bit] = color;
     state_.primary_cache.valid_bits |= 1u << bit;
 
-    if (state_.primary_cache.valid_bits == 0xFF) {
+    if (state_.primary_cache.valid_bits == 0xFF)
         flush_primary_cache(x, y);
-    }
 }
 
 void SuperFx::flush_primary_cache(uint8_t x, uint8_t y) {
@@ -151,9 +144,8 @@ void SuperFx::write_pixel_cache(FxPixelCache& cache) {
     for (uint8_t plane = 0; plane < state_.plot_bpp; plane++) {
         uint8_t value = 0;
 
-        for (uint8_t bit = 0; bit < 8; bit++) {
+        for (uint8_t bit = 0; bit < 8; bit++)
             value |= ((cache.pixels[bit] >> plane) & 1) << bit;
-        }
 
         const uint8_t byte_offset = ((plane >> 1) << 4) + (plane & 1);
         if (cache.valid_bits != 0xFF) {
@@ -293,9 +285,8 @@ void SuperFx::fx3_clear(uint8_t first_block, uint8_t last_block) {
             const uint32_t address = FX3_FB.planar_base +
                 row_offset + static_cast<uint32_t>(block) * 20 * 64;
 
-            for (uint32_t i = 0; i < 64; i++) {
+            for (uint32_t i = 0; i < 64; i++)
                 bus_.ram_write(bus_.context, address + i, FX3_CLEAR_PATTERN[i]);
-            }
         }
     }
 }

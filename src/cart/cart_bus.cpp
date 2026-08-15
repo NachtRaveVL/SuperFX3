@@ -73,7 +73,6 @@ static inline void cart_data_output(uint8_t value) {
 
     // Load the output latch before enabling the RP2350 data drivers.
     gpio_put_masked64(CART_DATA_MASK, static_cast<uint64_t>(value) << CART_DATA_BASE);
-
     gpio_set_dir_masked64(CART_DATA_MASK, CART_DATA_MASK);
 
     // Cartridge -> SNES.
