@@ -56,26 +56,24 @@ void SuperFx::process_fx3_command() {
 
 // -----------------------------------------------------------------------------
 // MERGE
-// GSU1/2:
-//     Normal MERGE instruction.
-// FX3:
-//     MERGE is repurposed as the FX3 command interface.
+// GSU1/2: Normal MERGE instruction.
+// FX3: MERGE is repurposed as the FX3 command interface.
 // -----------------------------------------------------------------------------
 void SuperFx::op_merge() {
     if (config_.chip == FxChip::FX3) {
         process_fx3_command();
         return;
+    } else {
+        // Normal GSU1 / GSU2 MERGE.
+        const uint16_t value = (state_.r[7] & 0xFF00) | (state_.r[8] >> 8);
+
+        write_dst(value);
+
+        state_.flags.carry = (value & 0xE0E0) != 0;
+        state_.flags.overflow = (value & 0xC0C0) != 0;
+        state_.flags.sign = (value & 0x8080) != 0;
+        state_.flags.zero = (value & 0xF0F0) != 0;
+
+        reset_prefix();
     }
-
-    // Normal GSU1 / GSU2 MERGE.
-    const uint16_t value = (state_.r[7] & 0xFF00) | (state_.r[8] >> 8);
-
-    write_dst(value);
-
-    state_.flags.carry = (value & 0xE0E0) != 0;
-    state_.flags.overflow = (value & 0xC0C0) != 0;
-    state_.flags.sign = (value & 0x8080) != 0;
-    state_.flags.zero = (value & 0xF0F0) != 0;
-
-    reset_prefix();
 }

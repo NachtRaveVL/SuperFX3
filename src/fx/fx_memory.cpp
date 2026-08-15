@@ -11,39 +11,35 @@
 // -------------------------------------------------------------
 
 bool SuperFx::rom_access_allowed() const {
-    if (config_.chip == FxChip::FX3) return true;
-    return !state_.flags.running || !state_.gsu_rom_access;
+    return config_.chip == FxChip::FX3 || !state_.flags.running || !state_.gsu_rom_access;
 }
 
 bool SuperFx::ram_access_allowed() const {
-    if (config_.chip == FxChip::FX3) return true;
-    return !state_.flags.running || !state_.gsu_ram_access;
+    return config_.chip == FxChip::FX3 || !state_.flags.running || !state_.gsu_ram_access;
 }
 
 // -------------------------------------------------------------
 // SNES CPU ROM reads
 // -------------------------------------------------------------
+
 uint8_t SuperFx::blocked_rom_value(uint32_t addr) const {
     if (addr & 0x01) return 0x01;
 
     switch (addr & 0x0E) {
         case 0x04:
             return 0x04;
-
         case 0x0A:
             return 0x08;
-
         case 0x0E:
             return 0x0C;
-
         default:
             return 0x00;
     }
 }
 
 uint8_t SuperFx::cpu_rom_read(uint32_t addr) {
-    if (!rom_access_allowed()) return blocked_rom_value(addr);
-
+    if (!rom_access_allowed())
+        return blocked_rom_value(addr);
     return bus_.rom_read(bus_.context, addr);
 }
 
@@ -51,8 +47,8 @@ uint8_t SuperFx::cpu_rom_read(uint32_t addr) {
 // SNES CPU RAM access
 // -------------------------------------------------------------
 uint8_t SuperFx::cpu_ram_read(uint32_t addr) {
-    if (!ram_access_allowed()) return 0;
-
+    if (!ram_access_allowed())
+        return 0;
     return bus_.ram_read(bus_.context, addr);
 }
 
@@ -83,20 +79,17 @@ void SuperFx::update_running_state() {
 // -------------------------------------------------------------
 
 void SuperFx::wait_rom_operation() {
-    if (state_.rom_delay) {
+    if (state_.rom_delay)
         step(state_.rom_delay);
-    }
 }
 
 void SuperFx::wait_ram_operation() {
-    if (state_.ram_delay) {
+    if (state_.ram_delay)
         step(state_.ram_delay);
-    }
 }
 
 void SuperFx::cpu_ram_write(uint32_t addr, uint8_t value) {
     if (!ram_access_allowed()) return;
-
     bus_.ram_write(bus_.context, addr, value);
 }
 
@@ -106,13 +99,13 @@ void SuperFx::step(uint32_t cycles) {
     // ROM buffer pipeline
     if (state_.rom_delay) {
         const uint32_t amount = cycles < state_.rom_delay ? cycles : state_.rom_delay;
-        state_.rom_delay -= (uint8_t)amount;
+        state_.rom_delay -= static_cast<uint8_t>(amount);
 
         if (state_.rom_delay == 0) {
             wait_for_rom_access();
 
             state_.rom_read_buffer = bus_.rom_read(bus_.context,
-                                                   ((uint32_t)state_.rom_bank << 16) | state_.r[14]);
+                                                   (static_cast<uint32_t>(state_.rom_bank) << 16) | state_.r[14]);
             state_.flags.rom_read_pending = false;
         }
     }
@@ -120,13 +113,13 @@ void SuperFx::step(uint32_t cycles) {
     // RAM write pipeline
     if (state_.ram_delay) {
         const uint32_t amount = cycles < state_.ram_delay ? cycles : state_.ram_delay;
-        state_.ram_delay -= (uint8_t)amount;
+        state_.ram_delay -= static_cast<uint8_t>(amount);
 
         if (state_.ram_delay == 0) {
             wait_for_ram_access();
 
             bus_.ram_write(bus_.context,
-                           ((uint32_t)state_.ram_bank << 16) | state_.ram_write_address,
+                           (static_cast<uint32_t>(state_.ram_bank) << 16) | state_.ram_write_address,
                            state_.ram_write_value);
         }
     }
@@ -141,7 +134,7 @@ uint8_t SuperFx::read_ram(uint16_t address) {
     wait_ram_operation();
     wait_for_ram_access();
 
-    return bus_.ram_read(bus_.context, ((uint32_t)state_.ram_bank << 16) | address);
+    return bus_.ram_read(bus_.context, (static_cast<uint32_t>(state_.ram_bank) << 16) | address);
 }
 
 void SuperFx::write_ram(uint16_t address, uint8_t value) {
@@ -158,10 +151,8 @@ uint8_t SuperFx::read_program_byte() {
     // Cache
     if (cache_addr < 512) {
         const uint8_t line = cache_addr >> 4;
-
-        if (!cache_valid_[line]) {
+        if (!cache_valid_[line])
             fill_cache_line(cache_addr & 0xFFF0);
-        }
 
         step(state_.clock_select ? 1 : 2);
 
@@ -175,7 +166,7 @@ uint8_t SuperFx::read_program_byte() {
         wait_for_rom_access();
 
         step(state_.clock_select ? 5 : 6);
-        return bus_.rom_read(bus_.context, ((uint32_t)bank << 16) | state_.r[15]);
+        return bus_.rom_read(bus_.context, (static_cast<uint32_t>(bank) << 16) | state_.r[15]);
     } else {
         // Program execution outside the ROM bank range.
         // Only banks $70-$71 map to GSU RAM.
@@ -187,7 +178,7 @@ uint8_t SuperFx::read_program_byte() {
 
         if (bank == 0x70 || bank == 0x71)
             return bus_.ram_read(bus_.context,
-                                 ((uint32_t)(bank - 0x70) << 16) | state_.r[15]);
+                                 (static_cast<uint32_t>(bank - 0x70) << 16) | state_.r[15]);
         return 0x00; // Unmapped GSU address.
     }
 }
@@ -200,7 +191,7 @@ void SuperFx::fill_cache_line(uint16_t cache_addr) {
         wait_rom_operation();
         wait_for_rom_access();
 
-        const uint32_t base = ((uint32_t)bank << 16) + state_.cache_base + dest;
+        const uint32_t base = (static_cast<uint32_t>(bank) << 16) + state_.cache_base + dest;
         for (unsigned i = 0; i < 16; i++)
             cache_[dest + i] = bus_.rom_read(bus_.context, base + i);
     } else {
@@ -208,7 +199,7 @@ void SuperFx::fill_cache_line(uint16_t cache_addr) {
         wait_for_ram_access();
 
         if (bank == 0x70 || bank == 0x71) {
-            const uint32_t base = ((uint32_t)(bank - 0x70) << 16) + state_.cache_base + dest;
+            const uint32_t base = (static_cast<uint32_t>(bank - 0x70) << 16) + state_.cache_base + dest;
             for (unsigned i = 0; i < 16; i++)
                 cache_[dest + i] = bus_.ram_read(bus_.context, base + i);
         } else {

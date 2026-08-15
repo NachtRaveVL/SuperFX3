@@ -316,7 +316,7 @@ void SuperFx::op_lsr() {
 // -------------------------------------------------------------
 void SuperFx::op_rol() {
     const uint16_t src = read_src();
-    const uint16_t result = (uint16_t)((src << 1) | (state_.flags.carry ? 1 : 0));
+    const uint16_t result = static_cast<uint16_t>((src << 1) | (state_.flags.carry ? 1 : 0));
 
     state_.flags.carry = (src & 0x8000) != 0;
 
@@ -332,11 +332,10 @@ void SuperFx::op_rol() {
 // $05-$0F: BRANCH
 // -------------------------------------------------------------
 void SuperFx::op_branch(bool condition) {
-    const int8_t offset = (int8_t)read_operand();
+    const int8_t offset = static_cast<int8_t>(read_operand());
 
-    if (condition) {
+    if (condition)
         write_reg(15, state_.r[15] + offset);
-    }
 }
 
 // -------------------------------------------------------------
@@ -376,10 +375,10 @@ void SuperFx::op_store(uint8_t reg) {
     state_.ram_address = state_.r[reg];
 
     const uint16_t value = read_src();
-    write_ram(state_.ram_address, (uint8_t)value);
+    write_ram(state_.ram_address, static_cast<uint8_t>(value));
 
     if (!state_.flags.alt1)
-        write_ram(state_.ram_address ^ 1, (uint8_t)(value >> 8));
+        write_ram(state_.ram_address ^ 1, static_cast<uint8_t>(value >> 8));
 
     reset_prefix();
 }
@@ -434,7 +433,7 @@ void SuperFx::op_load(uint8_t reg) {
 
     uint16_t value = read_ram(state_.ram_address);
     if (!state_.flags.alt1)
-        value |= (uint16_t)read_ram(state_.ram_address ^ 0x0001) << 8;
+        value |= static_cast<uint16_t>(read_ram(state_.ram_address ^ 0x0001) << 8);
 
     write_dst(value);
 
@@ -447,7 +446,8 @@ void SuperFx::op_load(uint8_t reg) {
 void SuperFx::op_plot_rpix() {
     if (state_.flags.alt1) {
         // RPIX
-        const uint8_t value = read_pixel((uint8_t)state_.r[1], (uint8_t)state_.r[2]);
+        const uint8_t value = read_pixel(static_cast<uint8_t>(tate_.r[1]),
+                                         static_cast<uint8_t>(state_.r[2]));
         state_.flags.zero = value == 0;
 
         // Mesen operates on an 8-bit pixel value here.
@@ -455,7 +455,8 @@ void SuperFx::op_plot_rpix() {
         write_dst(value);
     } else {
         // PLOT
-        draw_pixel((uint8_t)state_.r[1], (uint8_t)state_.r[2]);
+        draw_pixel(static_cast<uint8_t>(state_.r[1]),
+                   static_cast<uint8_t>(state_.r[2]));
         state_.r[1]++;
     }
 
@@ -483,7 +484,7 @@ void SuperFx::op_swap() {
 void SuperFx::op_color_cmode() {
     if (state_.flags.alt1) {
         // CMODE
-        const uint8_t value = (uint8_t)read_src();
+        const uint8_t value = static_cast<uint8_t>(read_src());
         state_.plot_transparent = (value & 0x01) != 0;
         state_.plot_dither = (value & 0x02) != 0;
         state_.color_high_nibble = (value & 0x04) != 0;
@@ -491,7 +492,7 @@ void SuperFx::op_color_cmode() {
         state_.object_mode = (value & 0x10) != 0;
     } else {
         // COLOR
-        state_.color = get_color((uint8_t)read_src());
+        state_.color = get_color(static_cast<uint8_t>(read_src()));
     }
 
     reset_prefix();
@@ -519,10 +520,10 @@ void SuperFx::op_not() {
 void SuperFx::op_add(uint8_t reg) {
     const uint16_t src = read_src();
     const uint16_t operand = state_.flags.alt2 ? reg : state_.r[reg];
-    uint32_t result = (uint32_t)src + operand;
+    uint32_t result = static_cast<uint32_t>(src) + operand;
     if (state_.flags.alt1) result += state_.flags.carry ? 1 : 0;
 
-    const uint16_t result16 = (uint16_t)result;
+    const uint16_t result16 = static_cast<uint16_t>(result);
     state_.flags.carry = (result & 0x10000) != 0;
     state_.flags.overflow = ((~(src ^ operand) & (operand ^ result16) & 0x8000) != 0);
     state_.flags.sign = (result16 & 0x8000) != 0;
@@ -545,12 +546,12 @@ void SuperFx::op_sub_compare(uint8_t reg) {
     const uint16_t src = read_src();
 
     uint16_t operand = state_.flags.alt2 && !state_.flags.alt1 ? reg : state_.r[reg];
-    int32_t result = (int32_t)src - (int32_t)operand;
+    int32_t result = static_cast<int32_t>(src) - static_cast<int32_t>(operand);
 
     // SBC
     if (state_.flags.alt1 && !state_.flags.alt2 && !state_.flags.carry) result--;
 
-    const uint16_t result16 = (uint16_t)result;
+    const uint16_t result16 = static_cast<uint16_t>(result);
     state_.flags.carry = result >= 0;
     state_.flags.overflow = (((src ^ operand) & (src ^ result16) & 0x8000) != 0);
     state_.flags.sign = (result16 & 0x8000) != 0;
@@ -588,8 +589,8 @@ void SuperFx::op_and_bic(uint8_t reg) {
 // -------------------------------------------------------------
 void SuperFx::op_mult(uint8_t reg) {
     const uint16_t operand = state_.flags.alt2 ? reg : state_.r[reg];
-    uint16_t value = state_.flags.alt1 ? (uint16_t)((uint8_t)read_src() * (uint8_t)operand)
-                                       : (uint16_t)((int8_t)read_src() * (int8_t)operand);
+    uint16_t value = state_.flags.alt1 ? static_cast<uint16_t>(static_cast<uint8_t>(read_src()) * static_cast<uint8_t>(operand))
+                                       : static_cast<uint16_t>(static_cast<int8_t>(read_src()) * static_cast<int8_t>(operand));
 
     write_dst(value);
 
@@ -609,8 +610,8 @@ void SuperFx::op_mult(uint8_t reg) {
 void SuperFx::op_sbk() {
     const uint16_t value = read_src();
 
-    write_ram(state_.ram_address, (uint8_t)value);
-    write_ram(state_.ram_address ^ 1, (uint8_t)(value >> 8));
+    write_ram(state_.ram_address, static_cast<uint8_t>(value));
+    write_ram(state_.ram_address ^ 1, static_cast<uint8_t>(value >> 8));
 
     reset_prefix();
 }
@@ -628,9 +629,9 @@ void SuperFx::op_link(uint8_t value) {
 // $95: SEX Sign-extend low 8 bits.
 // -------------------------------------------------------------
 void SuperFx::op_sex() {
-    const int16_t value = (int8_t)read_src();
+    const int16_t value = static_cast<int8_t>(read_src());
 
-    write_dst((uint16_t)value);
+    write_dst(static_cast<uint16_t>(value));
 
     state_.flags.zero = value == 0;
     state_.flags.sign = value < 0;
@@ -646,10 +647,9 @@ void SuperFx::op_asr() {
     const uint16_t src = read_src();
     state_.flags.carry = (src & 0x0001) != 0;
 
-    uint16_t result = (uint16_t)((int16_t)src >> 1);
-    if (state_.flags.alt1) {
-        result += ((uint32_t)src + 1) >> 16;
-    }
+    uint16_t result = static_cast<uint16_t>(static_cast<int16_t>(src) >> 1);
+    if (state_.flags.alt1)
+        result += (static_cast<uint32_t>(src) + 1) >> 16;
 
     write_dst(result);
 
@@ -703,7 +703,7 @@ void SuperFx::op_jmp(uint8_t reg) {
 // $9E: LOB
 // -------------------------------------------------------------
 void SuperFx::op_lob() {
-    const uint8_t value = (uint8_t)read_src();
+    const uint8_t value = static_cast<uint8_t>(read_src());
 
     write_dst(value);
 
@@ -723,15 +723,15 @@ void SuperFx::op_lob() {
 //     high 16 -> destination
 // -------------------------------------------------------------
 void SuperFx::op_fmult_lmult() {
-    const int32_t lhs = (int16_t)read_src();
-    const int32_t rhs = (int16_t)state_.r[6];
-    const uint32_t result = (uint32_t)(lhs * rhs);
+    const int32_t lhs = static_cast<int16_t>(read_src());
+    const int32_t rhs = static_cast<int16_t>(state_.r[6]);
+    const uint32_t result = static_cast<uint32_t>(lhs * rhs);
 
     if (state_.flags.alt1) {
-        state_.r[4] = (uint16_t)result;
+        state_.r[4] = static_cast<uint16_t>(result);
     }
 
-    const uint16_t high = (uint16_t)(result >> 16);
+    const uint16_t high = static_cast<uint16_t>(result >> 16);
     write_dst(high);
 
     state_.flags.carry = (result & 0x00008000u) != 0;
@@ -757,24 +757,24 @@ void SuperFx::op_ibt_sms_lms(uint8_t reg) {
     if (state_.flags.alt1) {
         // LMS Load word from RAM using short address.
         // Operand represents WORD address, so left shifted.
-        state_.ram_address = (uint16_t)read_operand() << 1;
+        state_.ram_address = static_cast<uint16_t>(read_operand()) << 1;
 
         const uint8_t lsb = read_ram(state_.ram_address);
         const uint8_t msb = read_ram(state_.ram_address | 0x0001);
 
-        write_reg(reg, (uint16_t)lsb | ((uint16_t)msb << 8));
+        write_reg(reg, static_cast<uint16_t>(lsb) | (static_cast<uint16_t>(msb) << 8));
 
     } else if (state_.flags.alt2) {
         // SMS Store word to RAM using short address.
-        state_.ram_address = (uint16_t)read_operand() << 1;
+        state_.ram_address = static_cast<uint16_t>(read_operand()) << 1;
         const uint16_t value = state_.r[reg];
 
-        write_ram(state_.ram_address, (uint8_t)value);
-        write_ram(state_.ram_address | 0x0001, (uint8_t)(value >> 8));
+        write_ram(state_.ram_address, static_cast<uint8_t>(value));
+        write_ram(state_.ram_address | 0x0001, static_cast<uint8_t>(value >> 8));
     } else {
         // IBT Immediate byte, SIGN EXTENDED.
-        const int8_t value = (int8_t)read_operand();
-        write_reg(reg, (uint16_t)(int16_t)value);
+        const int8_t value = static_cast<int8_t>(read_operand());
+        write_reg(reg, static_cast<uint16_t>(static_cast<int16_t>(value)));
     }
 
     reset_prefix();
@@ -809,7 +809,7 @@ void SuperFx::op_from(uint8_t reg) {
 // $C0: HIB Return high byte of source register.
 // -------------------------------------------------------------
 void SuperFx::op_hib() {
-    const uint8_t value = (uint8_t)(read_src() >> 8);
+    const uint8_t value = static_cast<uint8_t>(read_src() >> 8);
 
     write_dst(value);
 
@@ -907,13 +907,13 @@ void SuperFx::op_getb() {
     uint16_t value;
     if (state_.flags.alt1 && state_.flags.alt2) {
         // GETBS: Sign-extend ROM byte.
-        value = (uint16_t)(int16_t)(int8_t)rom_data;
+        value = static_cast<uint16_t>(static_cast<int16_t>(static_cast<int8_t>(rom_data)));
     } else if (state_.flags.alt2) {
         // GETBL: Replace LOW byte of source.
         value = (read_src() & 0xFF00) | rom_data;
     } else if (state_.flags.alt1) {
         // GETBH: Replace HIGH byte of source.
-        value = (read_src() & 0x00FF) | ((uint16_t)rom_data << 8);
+        value = (read_src() & 0x00FF) | (static_cast<uint16_t>(rom_data) << 8);
     } else { // GETB
         value = rom_data;
     }
@@ -936,33 +936,33 @@ void SuperFx::op_iwt_lm_sm(uint8_t reg) {
         // LM: Load word from full 16-bit RAM address.
         const uint8_t addr_lo = read_operand();
         const uint8_t addr_hi = read_operand();
-        state_.ram_address = (uint16_t)addr_lo | ((uint16_t)addr_hi << 8);
+        state_.ram_address = static_cast<uint16_t>(addr_lo) | (static_cast<uint16_t>(addr_hi) << 8);
 
         const uint8_t lsb = read_ram(state_.ram_address);
         const uint8_t msb = read_ram(state_.ram_address ^ 0x0001);
-        write_reg(reg, (uint16_t)lsb | ((uint16_t)msb << 8));
+        write_reg(reg, static_cast<uint16_t>(lsb) | (static_cast<uint16_t>(msb) << 8));
     } else if (state_.flags.alt2) {
         // SM: Store word to full 16-bit RAM address.
         const uint8_t addr_lo = read_operand();
         const uint8_t addr_hi = read_operand();
-        state_.ram_address = (uint16_t)addr_lo | ((uint16_t)addr_hi << 8);
+        state_.ram_address = static_cast<uint16_t>(addr_lo) | (static_cast<uint16_t>(addr_hi) << 8);
 
         const uint16_t value = state_.r[reg];
-        write_ram(state_.ram_address, (uint8_t)value);
-        write_ram(state_.ram_address ^ 0x0001, (uint8_t)(value >> 8));
+        write_ram(state_.ram_address, static_cast<uint8_t>(value));
+        write_ram(state_.ram_address ^ 0x0001, static_cast<uint8_t>(value >> 8));
     } else {
         // IWT: Immediate 16-bit word.
         const uint8_t lsb = read_operand();
         const uint8_t msb = read_operand();
 
-        write_reg(reg, (uint16_t)lsb | ((uint16_t)msb << 8));
+        write_reg(reg, static_cast<uint16_t>(lsb) | (static_cast<uint16_t>(msb) << 8));
     }
 
     reset_prefix();
 }
 
 void SuperFx::unimplemented(uint8_t opcode) {
-    (void)opcode;
+    static_cast<void>(opcode);
     state_.flags.running = false;
     update_running_state();
 }

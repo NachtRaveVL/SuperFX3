@@ -80,7 +80,6 @@ void SuperFx::write_dst(uint16_t value) {
 
 void SuperFx::write_reg(uint8_t reg, uint16_t value) {
     reg &= 0x0F;
-
     state_.r[reg] = value;
 
     // Writing R14 initiates a buffered ROM read.
@@ -102,4 +101,6 @@ void SuperFx::reset_prefix() {
     state_.dst_reg = 0;
 }
 
-void SuperFx::invalidate_cache() { std::memset(cache_valid_, 0, sizeof(cache_valid_)); }
+void SuperFx::invalidate_cache() {
+    std::memset(cache_valid_, 0, sizeof(cache_valid_));
+}

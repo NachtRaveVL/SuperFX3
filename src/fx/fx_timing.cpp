@@ -43,7 +43,7 @@ void SuperFx::run_accurate(uint32_t snes_master_clock) {
     // ROM/RAM operations continue advancing.
     if (state_.cycles < target_cycles_) {
         const uint64_t remaining = target_cycles_ - state_.cycles;
-        step((uint32_t)remaining);
+        step(static_cast<uint32_t>(remaining));
     }
 }
 

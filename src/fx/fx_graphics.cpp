@@ -18,12 +18,12 @@
 //   27 x 18 active tiles
 //   Stored using the GSU 160-pixel-high layout:
 //       tile_index = x_tile * 20 + y_tile
-//
 
 static constexpr uint16_t FX3_WIDTH = 216;
 static constexpr uint16_t FX3_HEIGHT = 144;
 static constexpr uint8_t FX3_X_TILES = FX3_WIDTH / 8;
 static constexpr uint8_t FX3_Y_TILES = FX3_HEIGHT / 8;
+
 // GSU ScreenHeight=160 means each X tile column contains 20 tiles,
 // even though FX3 only uses the first 18 here.
 static constexpr uint8_t FX3_TILE_Y_STRIDE = 20;
@@ -69,8 +69,8 @@ uint16_t SuperFx::get_tile_index(uint8_t x, uint8_t y) {
 
 uint32_t SuperFx::get_tile_address(uint8_t x, uint8_t y) {
     const uint16_t tile = get_tile_index(x, y);
-    return ((uint32_t)state_.screen_base << 10) +
-           ((uint32_t)tile * ((uint32_t)state_.plot_bpp << 3)) +
+    return (static_cast<uint32_t>(state_.screen_base) << 10) +
+           (static_cast<uint32_t>(tile) * (static_cast<uint32_t>(state_.plot_bpp) << 3)) +
            ((y & 0x07) * 2);
 }
 
@@ -131,7 +131,9 @@ void SuperFx::draw_pixel(uint8_t x, uint8_t y) {
 
 void SuperFx::flush_primary_cache(uint8_t x, uint8_t y) {
     write_pixel_cache(state_.secondary_cache);
+
     state_.secondary_cache = state_.primary_cache;
+
     state_.primary_cache.valid_bits = 0;
     state_.primary_cache.x = x & 0xF8;
     state_.primary_cache.y = y;
@@ -215,12 +217,9 @@ static inline void fx3_c2p_row(const uint8_t pixels[8], uint8_t planes[8]) {
 // -----------------------------------------------------------------------------
 void __not_in_flash_func(SuperFx::fx3_chunky_to_planar)(uint8_t region) {
     if (region >= 3) return;
-
     const uint8_t first_x_tile = region * FX3_REGION_TILES;
     const uint8_t last_x_tile = first_x_tile + FX3_REGION_TILES;
-
     if (last_x_tile > FX3_X_TILES) return;
-
     uint8_t pixels[8];
     uint8_t planes[8];
 
@@ -229,17 +228,17 @@ void __not_in_flash_func(SuperFx::fx3_chunky_to_planar)(uint8_t region) {
             // GSU 160-high tile arrangement:
             //     tile = x * 20 + y
             // Each 8bpp SNES tile occupies 64 bytes.
-            const uint32_t tile_index = (uint32_t)x_tile * FX3_TILE_Y_STRIDE + y_tile;
-            const uint32_t dst_tile = FX3_FB.planar_base + tile_index * 64;
+            const uint32_t tile_index = (static_cast<uint32_t>(x_tile) * FX3_TILE_Y_STRIDE) + y_tile;
+            const uint32_t dst_tile = FX3_FB.planar_base + (tile_index * 64);
 
             for (uint8_t row = 0; row < 8; row++) {
                 // Chunky source:
                 //     byte = framebuffer[y][x]
                 // One byte = one complete 8-bit pixel.
-                const uint16_t pixel_y = (uint16_t)y_tile * 8 + row;
-                const uint16_t pixel_x = (uint16_t)x_tile * 8;
+                const uint16_t pixel_y = (static_cast<uint16_t>(y_tile) * 8) + row;
+                const uint16_t pixel_x = static_cast<uint16_t>(x_tile) * 8;
                 const uint32_t src = FX3_FB.chunky_base +
-                    (uint32_t)pixel_y * FX3_FB.chunky_pitch + pixel_x;
+                    (static_cast<uint32_t>(pixel_y) * FX3_FB.chunky_pitch) + pixel_x;
 
                 pixels[0] = bus_.ram_read(bus_.context, src + 0);
                 pixels[1] = bus_.ram_read(bus_.context, src + 1);
@@ -257,7 +256,7 @@ void __not_in_flash_func(SuperFx::fx3_chunky_to_planar)(uint8_t region) {
                 // $20-$2F = planes 4/5
                 // $30-$3F = planes 6/7
                 // Two bytes per scanline within each plane pair.
-                const uint32_t line = (uint32_t)row << 1;
+                const uint32_t line = static_cast<uint32_t>(row) << 1;
                 bus_.ram_write(bus_.context, dst_tile + 0x00 + line, planes[0]);
                 bus_.ram_write(bus_.context, dst_tile + 0x00 + line + 1, planes[1]);
                 bus_.ram_write(bus_.context, dst_tile + 0x10 + line, planes[2]);
@@ -273,9 +272,7 @@ void __not_in_flash_func(SuperFx::fx3_chunky_to_planar)(uint8_t region) {
 
 void SuperFx::fx3_clear(uint8_t first_block, uint8_t last_block) {
     // Valid framebuffer block columns are 0-26.
-    if (first_block > 26 || last_block > 26 || first_block > last_block) {
-        return;
-    }
+    if (first_block > 26 || last_block > 26 || first_block > last_block) return;
 
     // 18 active tile rows.
     for (uint8_t row = 0; row < 18; row++) {
@@ -283,7 +280,7 @@ void SuperFx::fx3_clear(uint8_t first_block, uint8_t last_block) {
 
         for (uint8_t block = first_block; block <= last_block; block++) {
             const uint32_t address = FX3_FB.planar_base +
-                row_offset + static_cast<uint32_t>(block) * 20 * 64;
+                row_offset + (static_cast<uint32_t>(block) * 20 * 64);
 
             for (uint32_t i = 0; i < 64; i++)
                 bus_.ram_write(bus_.context, address + i, FX3_CLEAR_PATTERN[i]);

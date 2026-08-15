@@ -114,7 +114,6 @@ class SuperFx {
     void write_reg(uint8_t reg, uint16_t value);
 
     void reset_prefix();
-
     void update_running_state();
 
     // -----------------------------------------------------------------------------
@@ -133,6 +132,7 @@ class SuperFx {
     // Timing / pipeline
     // -----------------------------------------------------------------------------
     void step(uint32_t cycles);
+
     void wait_rom_operation();
     void wait_ram_operation();
     void wait_for_rom_access();
@@ -143,6 +143,7 @@ class SuperFx {
     // -----------------------------------------------------------------------------
     uint8_t read_rom_buffer();
     uint8_t read_ram(uint16_t address);
+
     void write_ram(uint16_t address, uint8_t value);
 
     // -----------------------------------------------------------------------------
@@ -209,8 +210,10 @@ class SuperFx {
     uint8_t get_color(uint8_t value);
     uint16_t get_tile_index(uint8_t x, uint8_t y);
     uint32_t get_tile_address(uint8_t x, uint8_t y);
+
     uint8_t read_pixel(uint8_t x, uint8_t y);
     void draw_pixel(uint8_t x, uint8_t y);
+
     bool is_transparent_pixel() const;
     void flush_primary_cache(uint8_t x, uint8_t y);
     void write_pixel_cache(FxPixelCache& cache);
