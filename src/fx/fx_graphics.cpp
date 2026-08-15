@@ -32,7 +32,9 @@ static constexpr uint8_t FX3_REGION_TILES = 9;
 
 static constexpr uint32_t FX3_CHUNKY_BASE = 0x00000;
 static constexpr uint32_t FX3_PLANAR_BASE = 0x10000;
-static constexpr Fx3Framebuffer FX3_FB = {FX3_CHUNKY_BASE, FX3_WIDTH, FX3_PLANAR_BASE};
+static constexpr Fx3Framebuffer FX3_FB = {
+    FX3_CHUNKY_BASE, FX3_WIDTH, FX3_PLANAR_BASE
+};
 
 static constexpr uint8_t FX3_CLEAR_PATTERN[64] = {
     0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00,
@@ -174,38 +176,64 @@ void SuperFx::write_pixel_cache(FxPixelCache& cache) {
 // SNES tile format expects the leftmost pixel in bit 7.
 // -----------------------------------------------------------------------------
 static inline void fx3_c2p_row(const uint8_t pixels[8], uint8_t planes[8]) {
-    planes[0] = (((pixels[0] >> 0) & 1) << 7) | (((pixels[1] >> 0) & 1) << 6) |
-                (((pixels[2] >> 0) & 1) << 5) | (((pixels[3] >> 0) & 1) << 4) |
-                (((pixels[4] >> 0) & 1) << 3) | (((pixels[5] >> 0) & 1) << 2) |
-                (((pixels[6] >> 0) & 1) << 1) | (((pixels[7] >> 0) & 1) << 0);
-    planes[1] = (((pixels[0] >> 1) & 1) << 7) | (((pixels[1] >> 1) & 1) << 6) |
-                (((pixels[2] >> 1) & 1) << 5) | (((pixels[3] >> 1) & 1) << 4) |
-                (((pixels[4] >> 1) & 1) << 3) | (((pixels[5] >> 1) & 1) << 2) |
-                (((pixels[6] >> 1) & 1) << 1) | (((pixels[7] >> 1) & 1) << 0);
-    planes[2] = (((pixels[0] >> 2) & 1) << 7) | (((pixels[1] >> 2) & 1) << 6) |
-                (((pixels[2] >> 2) & 1) << 5) | (((pixels[3] >> 2) & 1) << 4) |
-                (((pixels[4] >> 2) & 1) << 3) | (((pixels[5] >> 2) & 1) << 2) |
-                (((pixels[6] >> 2) & 1) << 1) | (((pixels[7] >> 2) & 1) << 0);
-    planes[3] = (((pixels[0] >> 3) & 1) << 7) | (((pixels[1] >> 3) & 1) << 6) |
-                (((pixels[2] >> 3) & 1) << 5) | (((pixels[3] >> 3) & 1) << 4) |
-                (((pixels[4] >> 3) & 1) << 3) | (((pixels[5] >> 3) & 1) << 2) |
-                (((pixels[6] >> 3) & 1) << 1) | (((pixels[7] >> 3) & 1) << 0);
-    planes[4] = (((pixels[0] >> 4) & 1) << 7) | (((pixels[1] >> 4) & 1) << 6) |
-                (((pixels[2] >> 4) & 1) << 5) | (((pixels[3] >> 4) & 1) << 4) |
-                (((pixels[4] >> 4) & 1) << 3) | (((pixels[5] >> 4) & 1) << 2) |
-                (((pixels[6] >> 4) & 1) << 1) | (((pixels[7] >> 4) & 1) << 0);
-    planes[5] = (((pixels[0] >> 5) & 1) << 7) | (((pixels[1] >> 5) & 1) << 6) |
-                (((pixels[2] >> 5) & 1) << 5) | (((pixels[3] >> 5) & 1) << 4) |
-                (((pixels[4] >> 5) & 1) << 3) | (((pixels[5] >> 5) & 1) << 2) |
-                (((pixels[6] >> 5) & 1) << 1) | (((pixels[7] >> 5) & 1) << 0);
-    planes[6] = (((pixels[0] >> 6) & 1) << 7) | (((pixels[1] >> 6) & 1) << 6) |
-                (((pixels[2] >> 6) & 1) << 5) | (((pixels[3] >> 6) & 1) << 4) |
-                (((pixels[4] >> 6) & 1) << 3) | (((pixels[5] >> 6) & 1) << 2) |
-                (((pixels[6] >> 6) & 1) << 1) | (((pixels[7] >> 6) & 1) << 0);
-    planes[7] = (((pixels[0] >> 7) & 1) << 7) | (((pixels[1] >> 7) & 1) << 6) |
-                (((pixels[2] >> 7) & 1) << 5) | (((pixels[3] >> 7) & 1) << 4) |
-                (((pixels[4] >> 7) & 1) << 3) | (((pixels[5] >> 7) & 1) << 2) |
-                (((pixels[6] >> 7) & 1) << 1) | (((pixels[7] >> 7) & 1) << 0);
+    // Naive version:
+    // planes[0] = (((pixels[0] >> 0) & 1) << 7) | (((pixels[1] >> 0) & 1) << 6) |
+    //             (((pixels[2] >> 0) & 1) << 5) | (((pixels[3] >> 0) & 1) << 4) |
+    //             (((pixels[4] >> 0) & 1) << 3) | (((pixels[5] >> 0) & 1) << 2) |
+    //             (((pixels[6] >> 0) & 1) << 1) | (((pixels[7] >> 0) & 1) << 0);
+    // planes[1] = (((pixels[0] >> 1) & 1) << 7) | (((pixels[1] >> 1) & 1) << 6) |
+    //             (((pixels[2] >> 1) & 1) << 5) | (((pixels[3] >> 1) & 1) << 4) |
+    //             (((pixels[4] >> 1) & 1) << 3) | (((pixels[5] >> 1) & 1) << 2) |
+    //             (((pixels[6] >> 1) & 1) << 1) | (((pixels[7] >> 1) & 1) << 0);
+    // planes[2] = (((pixels[0] >> 2) & 1) << 7) | (((pixels[1] >> 2) & 1) << 6) |
+    //             (((pixels[2] >> 2) & 1) << 5) | (((pixels[3] >> 2) & 1) << 4) |
+    //             (((pixels[4] >> 2) & 1) << 3) | (((pixels[5] >> 2) & 1) << 2) |
+    //             (((pixels[6] >> 2) & 1) << 1) | (((pixels[7] >> 2) & 1) << 0);
+    // planes[3] = (((pixels[0] >> 3) & 1) << 7) | (((pixels[1] >> 3) & 1) << 6) |
+    //             (((pixels[2] >> 3) & 1) << 5) | (((pixels[3] >> 3) & 1) << 4) |
+    //             (((pixels[4] >> 3) & 1) << 3) | (((pixels[5] >> 3) & 1) << 2) |
+    //             (((pixels[6] >> 3) & 1) << 1) | (((pixels[7] >> 3) & 1) << 0);
+    // planes[4] = (((pixels[0] >> 4) & 1) << 7) | (((pixels[1] >> 4) & 1) << 6) |
+    //             (((pixels[2] >> 4) & 1) << 5) | (((pixels[3] >> 4) & 1) << 4) |
+    //             (((pixels[4] >> 4) & 1) << 3) | (((pixels[5] >> 4) & 1) << 2) |
+    //             (((pixels[6] >> 4) & 1) << 1) | (((pixels[7] >> 4) & 1) << 0);
+    // planes[5] = (((pixels[0] >> 5) & 1) << 7) | (((pixels[1] >> 5) & 1) << 6) |
+    //             (((pixels[2] >> 5) & 1) << 5) | (((pixels[3] >> 5) & 1) << 4) |
+    //             (((pixels[4] >> 5) & 1) << 3) | (((pixels[5] >> 5) & 1) << 2) |
+    //             (((pixels[6] >> 5) & 1) << 1) | (((pixels[7] >> 5) & 1) << 0);
+    // planes[6] = (((pixels[0] >> 6) & 1) << 7) | (((pixels[1] >> 6) & 1) << 6) |
+    //             (((pixels[2] >> 6) & 1) << 5) | (((pixels[3] >> 6) & 1) << 4) |
+    //             (((pixels[4] >> 6) & 1) << 3) | (((pixels[5] >> 6) & 1) << 2) |
+    //             (((pixels[6] >> 6) & 1) << 1) | (((pixels[7] >> 6) & 1) << 0);
+    // planes[7] = (((pixels[0] >> 7) & 1) << 7) | (((pixels[1] >> 7) & 1) << 6) |
+    //             (((pixels[2] >> 7) & 1) << 5) | (((pixels[3] >> 7) & 1) << 4) |
+    //             (((pixels[4] >> 7) & 1) << 3) | (((pixels[5] >> 7) & 1) << 2) |
+    //             (((pixels[6] >> 7) & 1) << 1) | (((pixels[7] >> 7) & 1) << 0);
+
+    // Optimized version: XOR delta swap (bit-matrix transpose), little-endian exploit
+
+    // Pack the 8 source pixels into a 64-bit value so we can transpose them in parallel.
+    uint64_t x;
+    __builtin_memcpy(&x, pixels, sizeof(x));
+
+    // Put the pixel bytes into the order expected by the bit-swap stages below.
+    x = __builtin_bswap64(x);
+
+    // Swap neighboring 1-bit groups between the pixel bytes.
+    uint64_t t;
+    t = (x ^ (x >> 7)) & 0x00AA00AA00AA00AAULL;
+    x ^= t ^ (t << 7);
+
+    // Swap the resulting 2-bit groups.
+    t = (x ^ (x >> 14)) & 0x0000CCCC0000CCCCULL;
+    x ^= t ^ (t << 14);
+
+    // Finish the 8x8 bit transpose by swapping 4-bit groups.
+    t = (x ^ (x >> 28)) & 0x00000000F0F0F0F0ULL;
+    x ^= t ^ (t << 28);
+
+    // The eight bytes are now the eight bitplanes for these pixels.
+    __builtin_memcpy(planes, &x, sizeof(x));
 }
 
 // -----------------------------------------------------------------------------
@@ -217,37 +245,41 @@ static inline void fx3_c2p_row(const uint8_t pixels[8], uint8_t planes[8]) {
 // -----------------------------------------------------------------------------
 void __not_in_flash_func(SuperFx::fx3_chunky_to_planar)(uint8_t region) {
     if (region >= 3) return;
-    const uint8_t first_x_tile = region * FX3_REGION_TILES;
-    const uint8_t last_x_tile = first_x_tile + FX3_REGION_TILES;
+    const uint32_t first_x_tile = static_cast<uint32_t>(region) * FX3_REGION_TILES;
+    const uint32_t last_x_tile = first_x_tile + FX3_REGION_TILES;
     if (last_x_tile > FX3_X_TILES) return;
+
+    const auto context = bus_.context;
+    const auto ram_read = bus_.ram_read;
+    const auto ram_write = bus_.ram_write;
+
+    const uint32_t chunky_pitch = FX3_FB.chunky_pitch;
+    const uint32_t chunky_tile_stride = chunky_pitch << 3;
+    const uint32_t planar_x_stride = static_cast<uint32_t>(FX3_TILE_Y_STRIDE) << 6;
+
+    uint32_t src_col = FX3_FB.chunky_base + (first_x_tile << 3);
+    uint32_t dst_col = FX3_FB.planar_base + (first_x_tile * planar_x_stride);
     uint8_t pixels[8];
     uint8_t planes[8];
 
-    for (uint8_t x_tile = first_x_tile; x_tile < last_x_tile; x_tile++) {
-        for (uint8_t y_tile = 0; y_tile < FX3_Y_TILES; y_tile++) {
-            // GSU 160-high tile arrangement:
-            //     tile = x * 20 + y
-            // Each 8bpp SNES tile occupies 64 bytes.
-            const uint32_t tile_index = (static_cast<uint32_t>(x_tile) * FX3_TILE_Y_STRIDE) + y_tile;
-            const uint32_t dst_tile = FX3_FB.planar_base + (tile_index * 64);
+    for (uint32_t x_tile = first_x_tile; x_tile < last_x_tile; x_tile++) {
+        uint32_t src_tile = src_col;
+        uint32_t dst_tile = dst_col;
 
-            for (uint8_t row = 0; row < 8; row++) {
-                // Chunky source:
-                //     byte = framebuffer[y][x]
-                // One byte = one complete 8-bit pixel.
-                const uint16_t pixel_y = (static_cast<uint16_t>(y_tile) * 8) + row;
-                const uint16_t pixel_x = static_cast<uint16_t>(x_tile) * 8;
-                const uint32_t src = FX3_FB.chunky_base +
-                    (static_cast<uint32_t>(pixel_y) * FX3_FB.chunky_pitch) + pixel_x;
+        for (uint32_t y_tile = 0; y_tile < FX3_Y_TILES; y_tile++) {
+            uint32_t src = src_tile;
+            uint32_t dst = dst_tile;
 
-                pixels[0] = bus_.ram_read(bus_.context, src + 0);
-                pixels[1] = bus_.ram_read(bus_.context, src + 1);
-                pixels[2] = bus_.ram_read(bus_.context, src + 2);
-                pixels[3] = bus_.ram_read(bus_.context, src + 3);
-                pixels[4] = bus_.ram_read(bus_.context, src + 4);
-                pixels[5] = bus_.ram_read(bus_.context, src + 5);
-                pixels[6] = bus_.ram_read(bus_.context, src + 6);
-                pixels[7] = bus_.ram_read(bus_.context, src + 7);
+            for (uint32_t row = 0; row < 8; row++) {
+                pixels[0] = ram_read(context, src + 0);
+                pixels[1] = ram_read(context, src + 1);
+                pixels[2] = ram_read(context, src + 2);
+                pixels[3] = ram_read(context, src + 3);
+                pixels[4] = ram_read(context, src + 4);
+                pixels[5] = ram_read(context, src + 5);
+                pixels[6] = ram_read(context, src + 6);
+                pixels[7] = ram_read(context, src + 7);
+
                 fx3_c2p_row(pixels, planes);
 
                 // SNES 8bpp tile arrangement:
@@ -256,17 +288,25 @@ void __not_in_flash_func(SuperFx::fx3_chunky_to_planar)(uint8_t region) {
                 // $20-$2F = planes 4/5
                 // $30-$3F = planes 6/7
                 // Two bytes per scanline within each plane pair.
-                const uint32_t line = static_cast<uint32_t>(row) << 1;
-                bus_.ram_write(bus_.context, dst_tile + 0x00 + line, planes[0]);
-                bus_.ram_write(bus_.context, dst_tile + 0x00 + line + 1, planes[1]);
-                bus_.ram_write(bus_.context, dst_tile + 0x10 + line, planes[2]);
-                bus_.ram_write(bus_.context, dst_tile + 0x10 + line + 1, planes[3]);
-                bus_.ram_write(bus_.context, dst_tile + 0x20 + line, planes[4]);
-                bus_.ram_write(bus_.context, dst_tile + 0x20 + line + 1, planes[5]);
-                bus_.ram_write(bus_.context, dst_tile + 0x30 + line, planes[6]);
-                bus_.ram_write(bus_.context, dst_tile + 0x30 + line + 1, planes[7]);
+                ram_write(context, dst + 0x00, planes[0]);
+                ram_write(context, dst + 0x01, planes[1]);
+                ram_write(context, dst + 0x10, planes[2]);
+                ram_write(context, dst + 0x11, planes[3]);
+                ram_write(context, dst + 0x20, planes[4]);
+                ram_write(context, dst + 0x21, planes[5]);
+                ram_write(context, dst + 0x30, planes[6]);
+                ram_write(context, dst + 0x31, planes[7]);
+
+                src += chunky_pitch;
+                dst += 2;
             }
+
+            src_tile += chunky_tile_stride;
+            dst_tile += 64;
         }
+
+        src_col += 8;
+        dst_col += planar_x_stride;
     }
 }
 
@@ -274,16 +314,26 @@ void SuperFx::fx3_clear(uint8_t first_block, uint8_t last_block) {
     // Valid framebuffer block columns are 0-26.
     if (first_block > 26 || last_block > 26 || first_block > last_block) return;
 
+    const auto context = bus_.context;
+    const auto ram_write = bus_.ram_write;
+
+    const uint32_t block_stride = static_cast<uint32_t>(FX3_TILE_Y_STRIDE) << 6;
+    const uint32_t block_count = static_cast<uint32_t>(last_block - first_block) + 1;
+
+    uint32_t row_address = FX3_FB.planar_base +
+        (static_cast<uint32_t>(first_block) * block_stride);
+
     // 18 active tile rows.
-    for (uint8_t row = 0; row < 18; row++) {
-        const uint32_t row_offset = static_cast<uint32_t>(row) * 64;
+    for (uint32_t row = 0; row < 18; row++) {
+        uint32_t address = row_address;
 
-        for (uint8_t block = first_block; block <= last_block; block++) {
-            const uint32_t address = FX3_FB.planar_base +
-                row_offset + (static_cast<uint32_t>(block) * 20 * 64);
-
+        for (uint32_t block = 0; block < block_count; block++) {
             for (uint32_t i = 0; i < 64; i++)
-                bus_.ram_write(bus_.context, address + i, FX3_CLEAR_PATTERN[i]);
+                ram_write(context, address + i, FX3_CLEAR_PATTERN[i]);
+
+            address += block_stride;
         }
+
+        row_address += 64;
     }
 }

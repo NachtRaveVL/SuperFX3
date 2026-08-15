@@ -82,8 +82,8 @@ void SuperFx::write_reg(uint8_t reg, uint16_t value) {
     reg &= 0x0F;
     state_.r[reg] = value;
 
-    // Writing R14 initiates a buffered ROM read.
     if (reg == 14) {
+        // Writing R14 initiates a buffered ROM read.
         state_.flags.rom_read_pending = true;
         state_.rom_delay = state_.clock_select ? 5 : 6;
     } else if (reg == 15) {
