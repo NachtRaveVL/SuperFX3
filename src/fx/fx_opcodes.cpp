@@ -905,6 +905,7 @@ void SuperFx::op_dec(uint8_t reg) {
 void SuperFx::op_getb() {
     const uint8_t rom_data = read_rom_buffer();
     uint16_t value;
+
     if (state_.flags.alt1 && state_.flags.alt2) {
         // GETBS: Sign-extend ROM byte.
         value = static_cast<uint16_t>(static_cast<int16_t>(static_cast<int8_t>(rom_data)));

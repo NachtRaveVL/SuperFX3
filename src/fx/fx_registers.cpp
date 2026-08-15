@@ -424,8 +424,7 @@ void SuperFx::op_alt3() {
 
 // -------------------------------------------------------------
 // $40-$4B: LOAD / LOADB
-// ALT1:
-//   0 = word, 1 = byte
+// ALT1: 0 = word, 1 = byte
 // -------------------------------------------------------------
 void SuperFx::op_load(uint8_t reg) {
     reg &= 0x0F;
@@ -727,9 +726,8 @@ void SuperFx::op_fmult_lmult() {
     const int32_t rhs = static_cast<int16_t>(state_.r[6]);
     const uint32_t result = static_cast<uint32_t>(lhs * rhs);
 
-    if (state_.flags.alt1) {
+    if (state_.flags.alt1)
         state_.r[4] = static_cast<uint16_t>(result);
-    }
 
     const uint16_t high = static_cast<uint16_t>(result >> 16);
     write_dst(high);
@@ -763,7 +761,6 @@ void SuperFx::op_ibt_sms_lms(uint8_t reg) {
         const uint8_t msb = read_ram(state_.ram_address | 0x0001);
 
         write_reg(reg, static_cast<uint16_t>(lsb) | (static_cast<uint16_t>(msb) << 8));
-
     } else if (state_.flags.alt2) {
         // SMS Store word to RAM using short address.
         state_.ram_address = static_cast<uint16_t>(read_operand()) << 1;
@@ -787,8 +784,7 @@ void SuperFx::op_ibt_sms_lms(uint8_t reg) {
 void SuperFx::op_from(uint8_t reg) {
     reg &= 0x0F;
 
-    if (state_.flags.prefix) {
-        // MOVES
+    if (state_.flags.prefix) { // MOVES
         const uint16_t value = state_.r[reg];
 
         write_dst(value);
@@ -799,8 +795,7 @@ void SuperFx::op_from(uint8_t reg) {
         state_.flags.zero = value == 0;
 
         reset_prefix();
-    } else {
-        // FROM
+    } else { // FROM
         state_.src_reg = reg;
     }
 }
@@ -827,7 +822,6 @@ void SuperFx::op_hib() {
 // -------------------------------------------------------------
 void SuperFx::op_or_xor(uint8_t reg) {
     reg &= 0x0F;
-
     const uint16_t operand = state_.flags.alt2 ? reg : state_.r[reg];
     uint16_t value = state_.flags.alt1 ? read_src() ^ operand // XOR
                                        : read_src() | operand; // OR
@@ -905,6 +899,7 @@ void SuperFx::op_dec(uint8_t reg) {
 void SuperFx::op_getb() {
     const uint8_t rom_data = read_rom_buffer();
     uint16_t value;
+
     if (state_.flags.alt1 && state_.flags.alt2) {
         // GETBS: Sign-extend ROM byte.
         value = static_cast<uint16_t>(static_cast<int16_t>(static_cast<int8_t>(rom_data)));
