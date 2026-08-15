@@ -14,15 +14,15 @@
 #include "pico/platform.h"
 #include "pico/stdlib.h"
 
-static std::atomic<bool> g_bus_request {false};
-static std::atomic<bool> g_bus_granted {false};
+static std::atomic<bool> g_bus_request{false};
+static std::atomic<bool> g_bus_granted{false};
 
 static uint32_t g_rom_access_cycles = 0;
 
 // -----------------------------------------------------------------------------
 // Internal state
 // -----------------------------------------------------------------------------
-static CartControlPins g_pins {};
+static CartControlPins g_pins{};
 
 static bool g_prev_rd_n = true;
 static bool g_prev_wr_n = true;
@@ -36,8 +36,7 @@ static bool g_reset_asserted = false;
 static inline uint32_t cart_read_address() {
     const uint64_t gpio = gpio_get_all64();
     const uint32_t addr_lo = static_cast<uint32_t>(gpio & 0xFFFFu);
-    const uint32_t addr_hi =
-        static_cast<uint32_t>((gpio >> CART_ADDR_HI_BASE) & 0xFFu);
+    const uint32_t addr_hi = static_cast<uint32_t>((gpio >> CART_ADDR_HI_BASE) & 0xFFu);
 
     return addr_lo | (addr_hi << 16);
 }
@@ -49,8 +48,7 @@ static inline uint8_t cart_read_data() {
 
 static inline uint64_t cart_address_output_value(uint32_t address) {
     return static_cast<uint64_t>(address & 0xFFFFu) |
-           (static_cast<uint64_t>((address >> 16) & 0xFFu)
-            << CART_ADDR_HI_BASE);
+           (static_cast<uint64_t>((address >> 16) & 0xFFu) << CART_ADDR_HI_BASE);
 }
 
 static inline void cart_data_input() {
@@ -74,15 +72,9 @@ static inline void cart_data_output(uint8_t value) {
     gpio_put(g_pins.bus_oe_n, BUS_DISABLE);
 
     // Load the output latch before enabling the RP2350 data drivers.
-    gpio_put_masked64(
-        CART_DATA_MASK,
-        static_cast<uint64_t>(value) << CART_DATA_BASE
-    );
+    gpio_put_masked64(CART_DATA_MASK, static_cast<uint64_t>(value) << CART_DATA_BASE);
 
-    gpio_set_dir_masked64(
-        CART_DATA_MASK,
-        CART_DATA_MASK
-    );
+    gpio_set_dir_masked64(CART_DATA_MASK, CART_DATA_MASK);
 
     // Cartridge -> SNES.
     gpio_put(g_pins.data_dir, DATA_DIR_OUT);
@@ -96,32 +88,22 @@ static inline void cart_data_output(uint8_t value) {
 // -----------------------------------------------------------------------------
 // SuperFX register decode
 // -----------------------------------------------------------------------------
-static inline bool cart_is_gsu_bank(uint8_t bank) {
-    return bank <= 0x3F ||
-           (bank >= 0x80 && bank <= 0xBF);
-}
+static inline bool cart_is_gsu_bank(uint8_t bank) { return bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF); }
 
-static inline bool cart_is_gsu_register(
-    const SuperFx& fx,
-    uint32_t address
-) {
-    const uint8_t bank =
-        static_cast<uint8_t>(address >> 16);
+static inline bool cart_is_gsu_register(const SuperFx& fx, uint32_t address) {
+    const uint8_t bank = static_cast<uint8_t>(address >> 16);
 
     if (!cart_is_gsu_bank(bank)) {
         return false;
     }
 
-    const uint16_t addr =
-        static_cast<uint16_t>(address);
+    const uint16_t addr = static_cast<uint16_t>(address);
 
     if (fx.config().chip == FxChip::FX3) {
-        return addr >= 0x7000 &&
-               addr <= 0x7FFF;
+        return addr >= 0x7000 && addr <= 0x7FFF;
     }
 
-    return addr >= 0x3000 &&
-           addr <= 0x3FFF;
+    return addr >= 0x3000 && addr <= 0x3FFF;
 }
 
 static inline bool cart_gsu_ram_offset(const SuperFx& fx, uint32_t address, uint32_t& offset) {
@@ -133,8 +115,7 @@ static inline bool cart_gsu_ram_offset(const SuperFx& fx, uint32_t address, uint
         return true;
     }
 
-    if (fx.config().chip == FxChip::FX3)
-        return false;
+    if (fx.config().chip == FxChip::FX3) return false;
 
     if ((bank <= 0x3E || (bank >= 0x80 && bank <= 0xBE)) && addr >= 0x6000 && addr <= 0x7FFF) {
         offset = addr - 0x6000;
@@ -248,8 +229,7 @@ uint8_t cart_rom_read(void* context, uint32_t address) {
     // Ask core 0 for exclusive ownership of the physical cartridge bus.
     g_bus_request.store(true, std::memory_order_release);
 
-    while (!g_bus_granted.load(std::memory_order_acquire))
-        tight_loop_contents();
+    while (!g_bus_granted.load(std::memory_order_acquire)) tight_loop_contents();
 
     // Core 0 has disabled /BUS_OE. The SNES is isolated.
     gpio_put(g_pins.rom_oe_n, ROM_DISABLE);
@@ -275,8 +255,7 @@ uint8_t cart_rom_read(void* context, uint32_t address) {
     // Tell core 0 that it may reconnect the SNES side.
     g_bus_request.store(false, std::memory_order_release);
 
-    while (g_bus_granted.load(std::memory_order_acquire))
-        tight_loop_contents();
+    while (g_bus_granted.load(std::memory_order_acquire)) tight_loop_contents();
 
     return data;
 }
@@ -299,8 +278,7 @@ void cart_bus_service(SuperFx& fx) {
     const bool pawr_n = gpio_get(g_pins.pawr_n);
 
     if (g_bus_granted.load(std::memory_order_acquire)) {
-        if (g_bus_request.load(std::memory_order_acquire))
-            return;
+        if (g_bus_request.load(std::memory_order_acquire)) return;
 
         gpio_put(g_pins.rom_oe_n, ROM_DISABLE);
         gpio_set_dir_masked64(CART_DATA_MASK, 0);
@@ -373,10 +351,7 @@ void cart_bus_service(SuperFx& fx) {
         if (gsu_register) {
             fx.cpu_write(addr, data);
         } else if (gsu_ram) {
-            fx.cpu_ram_write(
-                ram_offset,
-                data
-            );
+            fx.cpu_ram_write(ram_offset, data);
         }
     }
 
