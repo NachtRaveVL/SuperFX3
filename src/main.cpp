@@ -4,61 +4,80 @@
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License, version 3 or later.
  *
- * Portions of this software derived from Mesen emulator.
+ * Portions of this software are based on MesenCE's GSU implementation (GPLv3).
+ * 
  * Special thanks to Randy Linden and kandowantu.
  * Dedicated to Rebecca Heinemann and Jennel Jacquays.
  */
 
-#include "cart/cart_bus.h"
-#include "fx/fx_core.h"
-#include "rp2350/fx_bus.h"
+#include <atomic>
 
+#include "platform/rp2350/snes_bus.h"
+#include "fx/fx_core.h"
+#include "platform/rp2350/fx_backend.h"
+#include "platform/rp2350/fx_sync.h"
+
+#include "hardware/clocks.h"
 #include "pico/multicore.h"
 #include "pico/platform/sections.h"
 #include "pico/stdlib.h"
 
-// 64 Mbit external ROM = 8 MiB.
-static constexpr uint32_t ROM_SIZE = 8u * 1024u * 1024u;
-
+static constexpr uint32_t FX3_SYS_CLOCK_HZ = 150000000u;
 // SuperFX banks $70-$71 provide 128 KiB of addressable RAM.
 // This fits comfortably inside the RP2350's on-chip SRAM.
 static constexpr uint32_t RAM_SIZE = 128u * 1024u;
 
-static SuperFx fx;
-alignas(4) static uint8_t g_ram[RAM_SIZE] {};
+static_assert(std::atomic<uint8_t>::is_always_lock_free,
+              "Shared SuperFX RAM requires lock-free byte atomics on RP2350.");
+static_assert(sizeof(std::atomic<uint8_t>) == sizeof(uint8_t),
+              "Shared SuperFX RAM assumes one byte of storage per atomic byte.");
 
-static Rp2350FxBusContext g_fx_bus_context {
-    ROM_SIZE,
-    RAM_SIZE,
-    g_ram
+static SuperFx fx;
+alignas(4) static std::atomic<uint8_t> g_ram[RAM_SIZE];
+
+static Rp2350FxBackendContext g_fx_backend_context {
+    nullptr, 0, RAM_SIZE,
+    g_ram,
+    fx3_qspi_rom_read, snes_irq_write
 };
 
-// -----------------------------------------------------------------------------
-// Dedicated SuperFX execution core
-// -----------------------------------------------------------------------------
+// Runs the SuperFX execution service continuously on RP2350 core 1.
 void __not_in_flash_func(core1_main)() {
     while (true) {
-        if (!fx.running()) {
+        if (!fx_sync_core1_service())
             tight_loop_contents();
-            continue;
-        }
-
-        fx.run_unlimited(256);
     }
 }
 
-// -----------------------------------------------------------------------------
-// Main
-// -----------------------------------------------------------------------------
+// Initializes shared RAM, the SuperFX core, PIO bus service, and the second core.
 int main() {
-    cart_bus_init(CART_PINS);
+    // FX3 Technical Specifications v1.0 identifies the cartridge RP2350B as
+    // running at 150 MHz. The PIO timing audit and FX3 throughput assumptions
+    // are tied to that clock, so fail closed if the production clock setup drifts.
+    if (clock_get_hz(clk_sys) != FX3_SYS_CLOCK_HZ)
+        panic("FX3 requires clk_sys = 150 MHz");
 
-    FxBus bus = fx_bus_create(&g_fx_bus_context);
-    fx.init(fx3_config, bus);
+    for (auto& byte : g_ram)
+        std::atomic_init(&byte, static_cast<uint8_t>(0));
+
+    snes_bus_init(SNES_BUS_PINS);
+
+    // FX3 uses the RP2350's primary QSPI flash for its private ROM image. The
+    // image occupies a reserved partition above the firmware and is read directly
+    // through the RP2350 XIP window.
+    if (!fx3_qspi_rom_init(g_fx_backend_context))
+        panic("FX3 firmware overlaps the reserved QSPI ROM partition");
+
+    FxBackend backend = fx_backend_create(&g_fx_backend_context);
+
+    fx.init(fx3_config, backend);
+    fx_sync_init(fx, backend);
+    snes_bus_start(fx);
 
     multicore_launch_core1(core1_main);
 
-    while (true) {
-        cart_bus_service(fx);
+    while (true) { // core0 loop
+        snes_bus_service();
+        tight_loop_contents();
     }
 }

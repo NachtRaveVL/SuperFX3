@@ -7,12 +7,14 @@
 #include "fx_core.h"
 #include "pico/platform/sections.h"
 
+// Mesen-derived: SFR low-byte packing follows MesenCE GsuFlags::GetFlagsLow().
 uint8_t __not_in_flash_func(SuperFx::flags_low)() const {
     return (state_.flags.zero << 1) | (state_.flags.carry << 2) |
            (state_.flags.sign << 3) | (state_.flags.overflow << 4) |
            (state_.flags.running << 5) | (state_.flags.rom_read_pending << 6);
 }
 
+// Mesen-derived: SFR high-byte packing follows MesenCE GsuFlags::GetFlagsHigh().
 uint8_t __not_in_flash_func(SuperFx::flags_high)() const {
     return (state_.flags.alt1 << 0) | (state_.flags.alt2 << 1) |
            (state_.flags.imm_low << 2) | (state_.flags.imm_high << 3) |
@@ -20,11 +22,17 @@ uint8_t __not_in_flash_func(SuperFx::flags_high)() const {
 }
 
 // SNES CPU -> GSU register read
-// Normal GSU maps this interface at $3000-$3FFF; FX3 moves it to $7000-$7FFF.
-// Hardware mirrors the smaller register/cache block through that 4 KiB window, so
-// masking converts either external mapping into the canonical $3000-$33FF block.
+// FX3 relocates the GSU MMIO area to $7000-$7FFF. The $300-byte register/cache
+// block mirrors every $400, while each $x300-$x3FF quarter is open bus. Internally
+// we retain the normal $3000-$32FF addresses so the core logic stays shared.
+// Mesen-derived: closely follows MesenCE Gsu::Read(), with the running-state gate explicit.
 uint8_t __not_in_flash_func(SuperFx::cpu_read)(uint16_t addr) {
-    addr &= 0x33FF;
+    if (config_.chip == FxChip::FX3 && (addr & 0xF000) == 0x7000) {
+        if ((addr & 0x0300) == 0x0300) return 0;
+        addr = static_cast<uint16_t>(0x3000 | (addr & 0x03FF));
+    } else {
+        addr &= 0x33FF;
+    }
 
     // While executing, only SFR/VCR are readable.
     // FX3 additionally allows R15 polling.
@@ -43,8 +51,10 @@ uint8_t __not_in_flash_func(SuperFx::cpu_read)(uint16_t addr) {
     if (addr >= 0x3000 && addr <= 0x301F) {
         const uint8_t reg = (addr >> 1) & 0x0F;
 
-        if (addr & 1) return state_.r[reg] >> 8;
-        return static_cast<uint8_t>(state_.r[reg]);
+        if (addr & 1)
+            return static_cast<uint8_t>(state_.r[reg] >> 8);
+        else
+            return static_cast<uint8_t>(state_.r[reg]);
     }
 
     switch (addr) {
@@ -80,7 +90,7 @@ uint8_t __not_in_flash_func(SuperFx::cpu_read)(uint16_t addr) {
             return static_cast<uint8_t>(state_.cache_base);
 
         case 0x303F:
-            return state_.cache_base >> 8;
+            return static_cast<uint8_t>(state_.cache_base >> 8);
     }
 
     // Program cache: $3100-$32FF
@@ -89,12 +99,20 @@ uint8_t __not_in_flash_func(SuperFx::cpu_read)(uint16_t addr) {
         return cache_[cache_addr];
     }
 
-    // Open bus eventually.
+    // FIXME: Define the open-bus and mirroring behavior for unmapped GSU register reads.
+    // We return 0 to match MesenCE, but MesenCE explicitly marks this behavior unresolved.
+    // Verify the real hardware response before locking this value down.
     return 0;
 }
 
+// Mesen-derived: closely follows MesenCE Gsu::Write(), adapted to the relocated FX3 register window.
 void __not_in_flash_func(SuperFx::cpu_write)(uint16_t addr, uint8_t value) {
-    addr &= 0x33FF;
+    if (config_.chip == FxChip::FX3 && (addr & 0xF000) == 0x7000) {
+        if ((addr & 0x0300) == 0x0300) return;
+        addr = static_cast<uint16_t>(0x3000 | (addr & 0x03FF));
+    } else {
+        addr &= 0x33FF;
+    }
 
     // While executing, SNES may only modify SFR and SCMR.
     if (state_.flags.running && addr != 0x3030 && addr != 0x303A)
@@ -155,6 +173,8 @@ void __not_in_flash_func(SuperFx::cpu_write)(uint16_t addr, uint8_t value) {
 
         // PBR
         case 0x3034:
+            // Keep the documented/reference 7-bit model for now. The sd2snes FX3
+            // branch deliberately experiments with bit 7 and notes that Mesen disagrees.
             state_.program_bank = value & 0x7F;
             invalidate_cache();
             break;

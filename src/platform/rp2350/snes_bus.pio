@@ -1,0 +1,263 @@
+; NR-RetroWorks SuperFX3 Firmware
+; RP2350B SNES cartridge bus front end
+
+.pio_version 1
+
+; GPIO31 is an internal service-select signal. PIO0 continuously decodes
+; A12-A15 so PIO1/PIO2 can reject unrelated SNES transactions quickly.
+; FIXME: Verify GPIO31 service-select setup time relative to /RD and /WR.
+; The select bit comes from a separate PIO0 state machine, so capture a trace and prove
+; the read/write state machines never sample a stale decode.
+.program snes_select_fx3
+.wrap_target
+    mov isr, null
+    in pins, 4
+    mov x, isr
+    set y, 7
+    jmp x!=y fx3_not_selected
+    set pins, 1
+    jmp wrap_target
+fx3_not_selected:
+    set pins, 0
+.wrap
+
+.program snes_select_gsu
+.wrap_target
+    mov isr, null
+    in pins, 4
+    mov x, isr
+    set y, 3
+    jmp x!=y gsu_check_6
+    set pins, 1
+    jmp wrap_target
+gsu_check_6:
+    set y, 6
+    jmp x!=y gsu_check_7
+    set pins, 1
+    jmp wrap_target
+gsu_check_7:
+    set y, 7
+    jmp x!=y gsu_not_selected
+    set pins, 1
+    jmp wrap_target
+gsu_not_selected:
+    set pins, 0
+.wrap
+
+; PIO0 captures A0-A15 on every /WR assertion. DMA forwards each capture
+; directly into the PIO1 write state machine TX FIFO.
+.program snes_write_addr
+.wrap_target
+    wait 0 gpio 19
+    mov isr, null
+    in pins, 16
+    push block
+    wait 1 gpio 19
+.wrap
+
+; PIO1 sees GPIO16-47. It captures A16-A23 + D0-D7 immediately after
+; /WR asserts, then pulls the matching PIO0 A0-A15 capture through DMA.
+; FIXME: Stress-test write pairing through FIFO saturation and pause/resume.
+; Normal FIFO ordering keeps A0-A15 matched with A16-A23+D0-D7, but we still need to
+; prove that no captured write is dropped or paired with the following transaction.
+; With IN shifting left, rebuilding ISR with IN Y,16 produces:
+;   bits  0-7  = A16-A23
+;   bits  8-15 = D0-D7
+;   bits 16-31 = A0-A15
+.program snes_write_fx3
+.wrap_target
+    wait 0 gpio 19
+    mov isr, null
+    in pins, 16
+    mov y, isr
+    pull block
+    mov isr, osr
+    in y, 16
+    jmp pin fx3_cpu_write
+
+    mov osr, isr
+    out null, 1
+    out x, 5
+    set y, 24
+    jmp x!=y fx3_write_ignore
+    out x, 1
+    jmp !x fx3_write_ignore
+    out x, 1
+    jmp !x fx3_cpu_write
+
+fx3_write_ignore:
+    wait 1 gpio 19
+    jmp wrap_target
+
+fx3_cpu_write:
+    push block
+    irq wait 1
+    wait 1 gpio 19
+    jmp wrap_target
+.wrap
+
+.program snes_write_gsu
+.wrap_target
+    wait 0 gpio 19
+    mov isr, null
+    in pins, 16
+    mov y, isr
+    pull block
+    mov isr, osr
+    in y, 16
+    jmp pin gsu_cpu_write
+
+    mov osr, isr
+    out null, 1
+    out x, 5
+    set y, 24
+    jmp x!=y gsu_write_ignore
+    out x, 1
+    jmp !x gsu_write_ignore
+    jmp gsu_cpu_write
+
+gsu_write_ignore:
+    wait 1 gpio 19
+    jmp wrap_target
+
+gsu_cpu_write:
+    push block
+    irq wait 1
+    wait 1 gpio 19
+    jmp wrap_target
+.wrap
+
+.program snes_reset
+.wrap_target
+    wait 0 gpio 21
+    irq 2
+    wait 1 gpio 21
+.wrap
+
+; Side-set pins are GPIO28-30 in this order:
+;   bit0 DATA_DIR, bit1 /BUS_OE, bit2 /ROM_OE
+;
+; side 4 = SNES -> cart, bus connected, ROM disabled
+; side 1 = cart -> SNES, bus connected, ROM enabled
+; side 7 = cart -> SNES, bus isolated,  ROM disabled
+; side 5 = cart -> SNES, bus connected, ROM disabled
+;
+; The response word supplied by core0 is:
+;   bit 0      drive flag
+;   bits 1-8   data byte
+;   bits 9-16  0xFF when driving, to enable D0-D7 PIO directions
+;   bits 17-24 zero, to release D0-D7 after /RD rises
+;
+; FIXME: Close the SNES read timing budget with a worst-case hardware measurement.
+; Include PIO input synchronization, decode latency, /ROM_OE assertion, CPU IRQ service,
+; data-direction changes, and the final data-valid margin before /RD rises.
+;
+; FX3 Technical Specifications v1.0 section 6 defines the 65816 cartridge map:
+;   $00-$3F:$8000-$FFFF  ROM
+;   $40-$6F:$0000-$FFFF  ROM
+;   $70-$71:$0000-$FFFF  FX SRAM
+;   $80-$BF:$8000-$FFFF  ROM mirror
+;   $C0-$FF:$0000-$FFFF  ROM mirror
+;
+; /ROMSEL can cover a broader cartridge window than that map, so the entire low
+; $7x bank group is sent to the CPU handler. It serves $70/$71 as SRAM and leaves
+; the remaining unmapped $72-$7D cartridge space undriven. Decode stays at side 4
+; so /ROM_OE is never asserted speculatively during an SRAM/unmapped read.
+;
+; X = 7, used only as the A20-A23 top-nibble comparison constant in FX3 mode.
+.program snes_read_fx3
+.side_set 3
+.wrap_target
+    wait 0 gpio 18 side 4
+    in pins, 20 side 4
+    mov osr, isr side 4
+    out y, 1 side 4
+    jmp !y fx3_snes_read side 4
+    jmp pin fx3_cpu_read side 4
+    jmp fx3_no_drive side 4
+
+fx3_snes_read:
+    ; OSR now begins at GPIO21. Skip GPIO21-GPIO31, then A16-A19.
+    ; The next four bits are A20-A23, i.e. the SNES bank's high nibble.
+    out null, 11 side 4
+    out null, 4 side 4
+    out y, 4 side 4
+    jmp x!=y fx3_rom_wait side 4
+    jmp fx3_cpu_read side 4
+
+fx3_rom_wait:
+    wait 1 gpio 18 side 1
+    jmp wrap_target side 4
+
+fx3_cpu_read:
+    irq 0 side 4
+    pull block side 4
+    out y, 1 side 4
+    jmp !y fx3_no_drive side 4
+    out pins, 8 side 7
+    out pindirs, 8 side 7
+    wait 1 gpio 18 side 5
+    out pindirs, 8 side 7
+    jmp wrap_target side 4
+
+fx3_no_drive:
+    wait 1 gpio 18 side 4
+.wrap
+
+; X is maintained by the firmware for the original GSU ROM ownership rule:
+;   X = 0  SNES ROM access allowed
+;   X = 1  GSU owns ROM, return the blocked-ROM pattern
+;
+; FIXME: Decode the full legacy GSU CPU ROM map instead of treating every /ROMSEL cycle as ROM.
+; /ROMSEL covers a wider cartridge window than the documented Super FX ROM ranges, so unused
+; full-bank addresses can currently expose physical flash. Add the missing bank/range qualification
+; or document and prove an intentional cartridge-side mirror.
+.program snes_read_gsu
+.side_set 3
+.wrap_target
+    wait 0 gpio 18 side 4
+    in pins, 20 side 4
+    mov osr, isr side 4
+    out y, 1 side 4
+    jmp !y gsu_snes_read side 4
+    jmp pin gsu_cpu_read side 4
+    jmp gsu_no_drive side 4
+
+gsu_snes_read:
+    jmp !x gsu_rom_allowed side 4
+    jmp gsu_cpu_read side 4
+
+gsu_rom_allowed:
+    out null, 11 side 1
+    out null, 1 side 1
+    out y, 5 side 1
+    set x, 24 side 1
+    jmp x!=y gsu_not_special side 1
+    out y, 1 side 1
+    jmp !y gsu_not_special side 1
+    ; A23 selects $70/$71 versus the $F0/$F1 mirror. Both are RAM, so
+    ; once A17-A22 match we intentionally do not test A23 here.
+    set x, 0 side 4
+    jmp gsu_cpu_read side 4
+
+gsu_not_special:
+    set x, 0 side 1
+
+gsu_rom_wait:
+    wait 1 gpio 18 side 1
+    jmp wrap_target side 4
+
+gsu_cpu_read:
+    irq 0 side 4
+    pull block side 4
+    out y, 1 side 4
+    jmp !y gsu_no_drive side 4
+    out pins, 8 side 7
+    out pindirs, 8 side 7
+    wait 1 gpio 18 side 5
+    out pindirs, 8 side 7
+    jmp wrap_target side 4
+
+gsu_no_drive:
+    wait 1 gpio 18 side 4
+.wrap
