@@ -25,7 +25,6 @@ static constexpr uint8_t FX3_CLEAR_PATTERN[64] = {
     0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF
 };
 
-// Primary PDF: commands 3-5 clear thirds A/B/C, each 9 x 18 characters.
 // Mesen-derived: exact 64-byte clear pattern, destination bank $71, 18-row span,
 // and 20-tile column stride follow Gsu::ClearCharFx3()/ProcessClearCommandFx3().
 // NOTE: Bank-$71 destination, 20-row stride, and 64-byte clear pattern come from

@@ -241,9 +241,8 @@ uint8_t __not_in_flash_func(fx_sync_cpu_read)(uint16_t addr) {
     if (g_fx->config().chip == FxChip::FX3 && (addr & 0xF000) == 0x7000) {
         if ((addr & 0x0300) == 0x0300) return 0;
         addr = static_cast<uint16_t>(0x3000 | (addr & 0x03FF));
-    } else {
+    } else
         addr &= 0x33FF;
-    }
 
     fx_sync_lock_state();
 
@@ -296,11 +295,13 @@ uint8_t __not_in_flash_func(fx_sync_cpu_read)(uint16_t addr) {
                 g_backend.set_irq(g_backend.context, false);
 
             fx_sync_lock_state();
+
             if (!g_core1_owns_fx.load(std::memory_order_relaxed)) {
                 g_fx->cpu_read(0x3031);
                 g_irq_clear_pending.store(false, std::memory_order_release);
                 fx_sync_publish_state();
             }
+
             fx_sync_unlock_state();
             return sfr_high;
 
@@ -319,6 +320,7 @@ uint8_t __not_in_flash_func(fx_sync_cpu_read)(uint16_t addr) {
         if (!g_core1_owns_fx.load(std::memory_order_relaxed)) {
             const uint8_t value = g_fx->cpu_read(external_addr);
             fx_sync_publish_state();
+
             fx_sync_unlock_state();
             return value;
         }
@@ -360,6 +362,7 @@ uint8_t __not_in_flash_func(fx_sync_cpu_ram_read)(uint32_t addr) {
 
     if (!g_core1_owns_fx.load(std::memory_order_relaxed)) {
         const uint8_t value = g_fx->cpu_ram_read(addr);
+
         fx_sync_unlock_state();
         return value;
     }
@@ -384,6 +387,7 @@ void __not_in_flash_func(fx_sync_cpu_ram_write)(uint32_t addr, uint8_t value) {
 
     if (!g_core1_owns_fx.load(std::memory_order_relaxed)) {
         g_fx->cpu_ram_write(addr, value);
+
         fx_sync_unlock_state();
         return;
     }
@@ -402,8 +406,9 @@ bool __not_in_flash_func(fx_sync_rom_access_allowed)() {
         return (g_access_snapshot.load(std::memory_order_acquire) & FX_SYNC_ACCESS_ROM) != 0;
 
     fx_sync_lock_state();
-    const bool allowed =
-        (fx_sync_access_state(*g_fx) & FX_SYNC_ACCESS_ROM) != 0;
+
+    const bool allowed = (fx_sync_access_state(*g_fx) & FX_SYNC_ACCESS_ROM) != 0;
+
     fx_sync_unlock_state();
     return allowed;
 }
@@ -413,8 +418,9 @@ bool __not_in_flash_func(fx_sync_ram_access_allowed)() {
         return (g_access_snapshot.load(std::memory_order_acquire) & FX_SYNC_ACCESS_RAM) != 0;
 
     fx_sync_lock_state();
-    const bool allowed =
-        (fx_sync_access_state(*g_fx) & FX_SYNC_ACCESS_RAM) != 0;
+
+    const bool allowed = (fx_sync_access_state(*g_fx) & FX_SYNC_ACCESS_RAM) != 0;
+
     fx_sync_unlock_state();
     return allowed;
 }
@@ -446,6 +452,7 @@ bool fx_sync_reset() {
             g_backend.set_irq(g_backend.context, false);
 
         const bool queued = fx_sync_queue_command(FxSyncCommandType::Reset);
+
         fx_sync_unlock_state();
         return queued;
     }
@@ -453,6 +460,7 @@ bool fx_sync_reset() {
     g_fx->reset();
     g_irq_clear_pending.store(false, std::memory_order_release);
     fx_sync_publish_state();
+
     fx_sync_unlock_state();
     return true;
 }

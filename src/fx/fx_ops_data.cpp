@@ -24,7 +24,6 @@ void SuperFx::op_ibt_sms_lms(uint8_t reg) {
         const uint8_t msb = read_ram(state_.ram_address | 0x0001);
 
         write_reg(reg, static_cast<uint16_t>(lsb) | (static_cast<uint16_t>(msb) << 8));
-
     } else if (state_.flags.alt2) {
         // SMS Store word to RAM using WORD address, so left shifted to BYTE address.
         state_.ram_address = static_cast<uint16_t>(read_operand()) << 1;
@@ -47,8 +46,7 @@ void SuperFx::op_ibt_sms_lms(uint8_t reg) {
 void SuperFx::op_from(uint8_t reg) {
     reg &= 0x0F;
 
-    if (state_.flags.prefix) {
-        // MOVES
+    if (state_.flags.prefix) { // MOVES
         const uint16_t value = state_.r[reg];
 
         write_dst(value);
@@ -59,10 +57,8 @@ void SuperFx::op_from(uint8_t reg) {
         state_.flags.zero = value == 0;
 
         reset_prefix();
-    } else {
-        // FROM
+    } else // FROM
         state_.src_reg = reg;
-    }
 }
 
 // $C0: HIB Return high byte of source register.
@@ -169,9 +165,8 @@ void SuperFx::op_getb() {
     } else if (state_.flags.alt1) {
         // GETBH: Replace HIGH byte of source.
         value = (read_src() & 0x00FF) | (static_cast<uint16_t>(rom_data) << 8);
-    } else { // GETB
+    } else // GETB
         value = rom_data;
-    }
 
     write_dst(value);
     reset_prefix();

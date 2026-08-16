@@ -111,7 +111,6 @@ void SuperFx::op_to(uint8_t reg) {
 // Mesen-derived: closely follows MesenCE Gsu::WITH().
 void SuperFx::op_with(uint8_t reg) {
     reg &= 0x0F;
-
     state_.src_reg = reg;
     state_.dst_reg = reg;
 

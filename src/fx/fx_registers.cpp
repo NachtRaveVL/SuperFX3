@@ -110,9 +110,8 @@ void __not_in_flash_func(SuperFx::cpu_write)(uint16_t addr, uint8_t value) {
     if (config_.chip == FxChip::FX3 && (addr & 0xF000) == 0x7000) {
         if ((addr & 0x0300) == 0x0300) return;
         addr = static_cast<uint16_t>(0x3000 | (addr & 0x03FF));
-    } else {
+    } else
         addr &= 0x33FF;
-    }
 
     // While executing, SNES may only modify SFR and SCMR.
     if (state_.flags.running && addr != 0x3030 && addr != 0x303A)
