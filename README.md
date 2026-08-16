@@ -19,13 +19,15 @@ The firmware is now building cleanly with the real RP2350 toolchain and the comp
 * RP2350B (e.g. SC1510-A4 80-QFN) running at 150 MHz
 * Dual-core operation with SNES bus service on core 0 and FX code execution on core 1
 * PIO/interrupt-based SNES cartridge bus decoding, read handling, write capture, and control
-* 128 KiB (1 Mbit) of shared cartridge RAM stored in RP2350 internal SRAM (392 KiB left for firmware)
+* 128 KiB (1 Mbit) of shared cartridge RAM stored in RP2350 internal SRAM
+  * 2x64 KiB banks at `$70:0000` and `$71:0000` (with 392 KiB left for firmware)
+  * 216×144 8bpp SNES planar framebuffer at `$71:0000` (with 33.625 KiB left over)
 * 4 MiB (32 Mbit) of flash storage on the RP2350 QSPI flash interface
-  * 3 MiB reserved for FX code and data
-  * 1 MiB reserved for firmware
+  * 3 MiB reserved for GSU/FX program code and data
+  * 1 MiB reserved for firmware (padded with `0xFF`)
 * Separate 1–16 MiB (8–128 Mbit) external parallel flash ROM for the SNES CPU
 * FX3 8bpp PLOT and pixel-cache graphics path with dithering and native SNES planar output
-* FX3 direct-to-planar draw, read, and clear commands, skipping all chunky conversion
+* FX3 direct-to-planar draw, read, and clear commands (no chunky source conversion)
 * SuperFX register access, IRQ, RESET, STOP/GO, and cross-core synchronization
 * Fully tested codebase with code coverage reporting
   * Host-side C++ tests for the processor core, opcodes, registers, synchronization, and backend
@@ -45,9 +47,11 @@ The RP2350B is split into two main jobs.
 
 PIO handles the timing-sensitive cartridge bus work. One PIO block decodes the SuperFX service area, another captures SNES writes, and another services reads and bus-control changes.
 
-The SuperFX banks `$70-$71` are backed by 128 KiB of RP2350 internal SRAM. The FX3 processor's private 3 MiB ROM image lives in a reserved partition at the top of the RP2350's primary QSPI flash.
+The SuperFX banks `$70-$71` are backed by 128 KiB of RP2350 internal SRAM, with the FX framebuffer living at the start of the later. The FX3 processor's private 3 MiB ROM image lives in a reserved partition at the top of the RP2350's primary QSPI flash.
 
-The QSPI FX3 ROM is not the main SNES game ROM. The cartridge's normal parallel ROM remains available to the SNES 65816 side while the FX3 processor accesses its own ROM image. The 65816 parallel-ROM path is pass-through: firmware gates `/ROM_OE` but does not remap CPU ROM addresses, so the PCB wiring or programmed image must already implement the intended SNES ROM map.
+The QSPI GSU/FX ROM is not the main SNES game ROM. The cartridge's normal parallel ROM remains available to the SNES 65816 side while the GSU/FX processor accesses its own GSU/FX ROM image.
+
+The 65816 parallel-ROM path is currently pass-through: firmware gates `/ROM_OE` but does not remap CPU ROM addresses, so the PCB wiring or programmed image must already implement the intended SNES ROM map. This is slowly changing as we evolve the firmware.
 
 ---
 
