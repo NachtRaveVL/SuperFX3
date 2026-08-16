@@ -10,7 +10,7 @@
 #include "fx_sync.h"
 #include "snes_pio.h"
 
-#include "pico/platform/sections.h"
+#include "pico.h"
 #include "pico/sync.h"
 
 static constexpr uint32_t FX_SYNC_COMMAND_COUNT = 256;

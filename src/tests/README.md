@@ -7,7 +7,7 @@
 - `fx_core_sanity.cpp` checks the current FX3/PDF behavior: 8bpp PLOT/pixel-cache behavior, all three clear regions, MERGE command dispatch, QSPI logical ROM mapping, VCR, R15/STOP behavior, and simultaneous FX3 CPU ROM/RAM visibility.
 - `sync_tests.cpp` exercises the cross-core command queue, snapshots, reset retry, STOP handoff, IRQ acknowledgement, and legacy GSU ownership notifications without RP2350 hardware.
 - `register_backend_tests.cpp` covers register read/write side effects and the host-testable RP2350 backend callbacks and bounds checks.
-- `pio_static_tests.py` interprets the PIO source and exhaustively checks routing/selector decisions, instruction-memory use, write capture packing, WAIT GPIO ranges, and the C++/PIO IRQ contract.
+- `pio_static_tests.py` interprets the PIO source and exhaustively checks routing/selector decisions, instruction-memory use, write capture packing, WAIT GPIOs against `boards/snes_fx3.h`, the C++/PIO IRQ contract, and the custom-board CMake setup.
 - `packer_tests.py` verifies the combined QSPI image layout, padding, 4/8 MiB placement, and invalid-layout rejection.
 
 Run the complete host/static suite with:

@@ -18,7 +18,6 @@ FLAGS=(
     -Wall -Wextra -Wpedantic -Werror
     -Wconversion -Wsign-conversion
     -Itests/sdk_stubs -Itests/stubs -I. -Ifx -Iplatform/rp2350
-    -DPICO_FLASH_SIZE_BYTES=4194304
 )
 
 CORE_SOURCES=(

@@ -19,7 +19,7 @@
 
 #include "hardware/clocks.h"
 #include "pico/multicore.h"
-#include "pico/platform/sections.h"
+#include "pico.h"
 #include "pico/stdlib.h"
 
 static constexpr uint32_t FX3_SYS_CLOCK_HZ = 150000000u;
@@ -60,7 +60,7 @@ int main() {
     for (auto& byte : g_ram)
         std::atomic_init(&byte, static_cast<uint8_t>(0));
 
-    snes_bus_init(SNES_BUS_PINS);
+    snes_bus_init();
 
     // FX3 uses the RP2350's primary QSPI flash for its private ROM image. The
     // image occupies a reserved partition above the firmware and is read directly

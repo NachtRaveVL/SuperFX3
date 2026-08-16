@@ -5,7 +5,7 @@
  * it under the terms of the GNU General Public License, version 3 or later.
  */
 #include "fx_core.h"
-#include "pico/platform/sections.h"
+#include "pico.h"
 
 // Mesen-derived: SFR low-byte packing follows MesenCE GsuFlags::GetFlagsLow().
 uint8_t __not_in_flash_func(SuperFx::flags_low)() const {

@@ -1,4 +1,5 @@
 #pragma once
+#include "pico.h"
 #include <cstdint>
 #include <cstdlib>
 using uint = unsigned int;

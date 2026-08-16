@@ -8,7 +8,7 @@
 #include <cstring>
 
 #include "fx_core.h"
-#include "pico/platform/sections.h"
+#include "pico.h"
 
 void SuperFx::init(const FxConfig& config, const FxBackend& backend) {
     config_ = config;

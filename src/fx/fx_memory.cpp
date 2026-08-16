@@ -5,7 +5,7 @@
  * it under the terms of the GNU General Public License, version 3 or later.
  */
 #include "fx_core.h"
-#include "pico/platform/sections.h"
+#include "pico.h"
 
 // NOTE: The FX and 65816 may access ROM simultaneously, so CPU ROM is never
 // blocked by FX3 execution. GSU1/2 retain original ownership gating.

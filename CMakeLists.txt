@@ -1,16 +1,12 @@
 cmake_minimum_required(VERSION 3.13...3.31)
 
-# This firmware uses GPIO0-GPIO47 and therefore requires the RP2350B package.
-# A custom board header is also where Pico SDK gets the real boot-flash setup,
-# so never allow the SDK to silently fall back to the RP2350A-based Pico 2.
-set(PICO_PLATFORM rp2350 CACHE STRING "RP-series platform")
+# The firmware is physically tied to boards/snes_fx3.h. Pico SDK 2.x must know
+# both the custom board search path and selected board before SDK import.
 list(APPEND PICO_BOARD_HEADER_DIRS "${CMAKE_CURRENT_LIST_DIR}/boards")
+set(PICO_BOARD snes_fx3 CACHE STRING "Pico board")
 
-if(NOT DEFINED PICO_BOARD AND "$ENV{PICO_BOARD}" STREQUAL "")
-    message(FATAL_ERROR
-        "Set PICO_BOARD to an RP2350B board definition before configuring. "
-        "See boards/README.md for the required package and boot-flash settings."
-    )
+if(NOT PICO_BOARD STREQUAL "snes_fx3")
+    message(FATAL_ERROR "SuperFX3 firmware requires PICO_BOARD=snes_fx3; found ${PICO_BOARD}.")
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake")
@@ -29,7 +25,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 pico_sdk_init()
 
 if(PICO_SDK_VERSION_STRING VERSION_LESS "2.3.0")
-    message(FATAL_ERROR "SuperFX3 requires Pico SDK 2.3.0 or newer, found ${PICO_SDK_VERSION_STRING}.")
+    message(FATAL_ERROR "SuperFX3 requires Pico SDK 2.3.0 or newer; found ${PICO_SDK_VERSION_STRING}.")
 endif()
 
 add_executable(superfx3
@@ -64,8 +60,6 @@ target_include_directories(superfx3 PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/src/platform/rp2350
 )
 
-# RP2350B defaults PICO_PIO_USE_GPIO_BASE to 1 because it exposes 48 GPIOs.
-# snes_pio.cpp static-asserts that value so an incompatible board definition fails loudly.
 target_compile_definitions(superfx3 PRIVATE
     $<$<CONFIG:Debug>:PARAM_ASSERTIONS_ENABLED_HARDWARE_PIO=1>
 )

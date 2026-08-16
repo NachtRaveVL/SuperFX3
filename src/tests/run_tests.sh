@@ -15,9 +15,8 @@ COMMON_FLAGS=(
     -Wall -Wextra -Wpedantic -Werror
     -Wconversion -Wsign-conversion
 )
-CORE_INCLUDES=(-Itests/stubs -I. -Ifx)
+CORE_INCLUDES=(-Itests/sdk_stubs -Itests/stubs -I. -Ifx)
 PICO_INCLUDES=(-Itests/sdk_stubs -I. -Ifx -Iplatform/rp2350)
-PICO_DEFINES=(-DPICO_FLASH_SIZE_BYTES=4194304)
 
 CORE_SOURCES=(
     fx/fx_core.cpp
@@ -60,28 +59,28 @@ build_and_run_core_test opcode_tests
 
 echo
 echo "== Synchronization tests =="
-"$CXX" "${COMMON_FLAGS[@]}" "${PICO_INCLUDES[@]}" "${PICO_DEFINES[@]}" \
+"$CXX" "${COMMON_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
     tests/sync_tests.cpp "${CORE_SOURCES[@]}" platform/rp2350/fx_sync.cpp \
     -o "$BUILD/sync_tests"
 "$BUILD/sync_tests"
 
 echo
 echo "== FX3/PDF sanity tests =="
-"$CXX" "${COMMON_FLAGS[@]}" "${PICO_INCLUDES[@]}" "${PICO_DEFINES[@]}" \
+"$CXX" "${COMMON_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
     tests/fx_core_sanity.cpp "${CORE_SOURCES[@]}" platform/rp2350/fx_backend.cpp \
     tests/sdk_stubs/flash_end.cpp -o "$BUILD/fx_core_sanity"
 "$BUILD/fx_core_sanity"
 
 echo
 echo "== Register/backend tests =="
-"$CXX" "${COMMON_FLAGS[@]}" "${PICO_INCLUDES[@]}" "${PICO_DEFINES[@]}" \
+"$CXX" "${COMMON_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
     tests/register_backend_tests.cpp "${CORE_SOURCES[@]}" platform/rp2350/fx_backend.cpp \
     tests/sdk_stubs/flash_end.cpp -o "$BUILD/register_backend_tests"
 "$BUILD/register_backend_tests"
 
 echo
 echo "== Full production strict stub link =="
-"$CXX" "${COMMON_FLAGS[@]}" "${PICO_INCLUDES[@]}" "${PICO_DEFINES[@]}" \
+"$CXX" "${COMMON_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
     "${PRODUCTION_SOURCES[@]}" -o "$BUILD/superfx3_stub_link"
 
 echo

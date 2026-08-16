@@ -1,69 +1,61 @@
-# Prerequisites
+# Compiler output
 *.d
-
-# Compiled Object files
-*.slo
-*.lo
 *.o
 *.obj
+*.a
+*.elf
+*.uf2
+*.hex
+*.map
 
-# Precompiled Headers
+# Precompiled headers
 *.gch
 *.pch
 
-# Linker files
-*.ilk
-
-# Debugger Files
+# Debug information
+*.dwo
 *.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-*.so.*
-
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
 
 # Build directories
 build/
 Build/
 build-*/
+generated/
+picoasm/
+picoasm-install/
+pico-sdk/
 
-# CMake generated files
+# CMake
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
-Makefile
 install_manifest.txt
 compile_commands.json
+Makefile
 
-# Temporary files
+# Ninja
+build.ninja
+rules.ninja
+.ninja_deps
+.ninja_log
+
+# CMake local/user configuration
+CMakeUserPresets.json
+
+# Test output and caches
+Testing/
+.cache/
+
+# Temporary/editor files
 *.tmp
 *.log
 *.bak
 *.swp
+*~
 
-# vcpkg
+# Package managers
 vcpkg_installed/
 
-# debug information files
-*.dwo
-
-# test output & cache
-Testing/
-.cache/
+# OS junk
+.DS_Store
+Thumbs.db

@@ -6,10 +6,10 @@
  */
 #pragma once
 
-#include "snes_bus.h"
+#include "../../fx/fx_core.h"
 
 /// Starts the PIO state machines that monitor SNES bus transactions.
-void snes_pio_start(const SnesBusPins& pins, SuperFx& fx);
+void snes_pio_start(SuperFx& fx);
 /// Temporarily disconnects PIO control of the cartridge bus.
 void snes_pio_pause();
 /// Restores PIO control after a GSU-side physical ROM access.

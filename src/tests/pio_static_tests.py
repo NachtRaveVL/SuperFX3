@@ -7,11 +7,19 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 PIO = ROOT / "platform/rp2350/snes_bus.pio"
 PIO_CPP = ROOT / "platform/rp2350/snes_pio.cpp"
-BUS_H = ROOT / "platform/rp2350/snes_bus.h"
+BOARD_H = ROOT.parent / "boards/snes_fx3.h"
+CMAKE = ROOT.parent / "CMakeLists.txt"
 
 def fail(message: str) -> None:
     print(f"FAIL: {message}", file=sys.stderr)
     raise SystemExit(1)
+
+def board_define(name: str) -> int:
+    text = BOARD_H.read_text()
+    match = re.search(rf"^#define\s+{re.escape(name)}\s+(\d+)\s*$", text, re.MULTILINE)
+    if not match:
+        fail(f"board definition is missing numeric {name}")
+    return int(match.group(1))
 
 def parse_programs(text: str) -> dict[str, list[str]]:
     programs: dict[str, list[str]] = {}
@@ -72,7 +80,6 @@ def parse_source_programs(text: str) -> dict[str, PioSourceProgram]:
             continue
         if line == ".wrap_target":
             wrap_target = len(instructions)
-            labels["wrap_target"] = wrap_target
             continue
         if line.startswith("."):
             continue
@@ -179,9 +186,7 @@ def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x
             else:
                 target = body.strip()
             if take:
-                if target == "wrap_target":
-                    pc = program.wrap_target
-                elif target in program.labels:
+                if target in program.labels:
                     pc = program.labels[target]
                 else:
                     fail(f"source interpreter cannot resolve label {target}")
@@ -189,6 +194,17 @@ def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x
             fail(f"source interpreter does not support instruction: {op}")
 
     fail("source interpreter exceeded its instruction limit")
+
+def test_jump_targets_resolve(pio_text: str) -> None:
+    programs = parse_source_programs(pio_text)
+    for name, program in programs.items():
+        for insn in program.instructions:
+            op = re.sub(r"\s+side\s+\d+", "", insn).strip()
+            if not op.startswith("jmp "):
+                continue
+            target = op.split()[-1]
+            if target not in program.labels:
+                fail(f"{name} jumps to undefined symbol {target}")
 
 def test_source_driven_routes(pio_text: str) -> None:
     programs = parse_source_programs(pio_text)
@@ -388,19 +404,60 @@ def test_wait_gpio_windows(programs: dict[str, list[str]]) -> None:
                 if not lo <= pin <= hi:
                     fail(f"{name} waits on GPIO{pin}, outside its PIO GPIO window {lo}-{hi}")
 
+def test_pio_wait_pins(programs: dict[str, list[str]]) -> None:
+    expected = {
+        "snes_write_addr": board_define("SNES_WR_N_PIN"),
+        "snes_write_fx3": board_define("SNES_WR_N_PIN"),
+        "snes_write_gsu": board_define("SNES_WR_N_PIN"),
+        "snes_reset": board_define("SNES_RESET_N_PIN"),
+        "snes_read_fx3": board_define("SNES_RD_N_PIN"),
+        "snes_read_gsu": board_define("SNES_RD_N_PIN"),
+    }
+    wait_re = re.compile(r"^wait\s+[01]\s+gpio\s+(\d+)")
+    for name, pin in expected.items():
+        waits = [int(m.group(1)) for insn in programs[name] if (m := wait_re.match(insn))]
+        if not waits or any(wait_pin != pin for wait_pin in waits):
+            fail(f"{name} WAIT GPIOs {waits} do not match board GPIO{pin}")
+
+def test_cmake_board_setup() -> None:
+    text = CMAKE.read_text()
+    required = [
+        'list(APPEND PICO_BOARD_HEADER_DIRS "${CMAKE_CURRENT_LIST_DIR}/boards")',
+        'set(PICO_BOARD snes_fx3 CACHE STRING "Pico board")',
+        'include("${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake")',
+        'pico_generate_pio_header(',
+        '${CMAKE_CURRENT_LIST_DIR}/src/platform/rp2350/snes_bus.pio',
+        'pico_enable_stdio_uart(superfx3 0)',
+        'pico_enable_stdio_usb(superfx3 0)',
+        'pico_add_extra_outputs(superfx3)',
+    ]
+    for token in required:
+        if token not in text:
+            fail(f"CMake setup is missing {token}")
+
+    board_pos = text.index('list(APPEND PICO_BOARD_HEADER_DIRS')
+    select_pos = text.index('set(PICO_BOARD snes_fx3')
+    import_pos = text.index('include("${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake")')
+    if board_pos > import_pos or select_pos > import_pos:
+        fail("PICO_BOARD_HEADER_DIRS and PICO_BOARD must be set before Pico SDK import")
+    if 'set(PICO_PLATFORM ' in text:
+        fail("CMake duplicates PICO_PLATFORM instead of taking it from snes_fx3.h")
+
 def test_cpp_pio_setup() -> None:
     text = PIO_CPP.read_text()
     required = [
-        "pio_set_gpio_base(pio0, 0)", "pio_set_gpio_base(pio1, 16)",
-        "pio_set_gpio_base(pio2, 16)", "sm_config_set_in_pins(&select_config, 12)",
-        "sm_config_set_set_pins(&select_config, 31, 1)",
-        "sm_config_set_in_pins(&g_write_addr_config, SNES_ADDR_LO_BASE)",
-        "sm_config_set_jmp_pin(&g_write_config, 31)",
-        "sm_config_set_in_pins(&g_write_config, 32)",
-        "sm_config_set_in_pins(&g_read_config, 20)",
-        "sm_config_set_out_pins(&g_read_config, 40, 8)",
-        "sm_config_set_sideset_pins(&g_read_config, 28)",
-        "sm_config_set_jmp_pin(&g_read_config, 31)",
+        "pio_set_gpio_base(pio0, SNES_PIO_ADDR_LO_BASE)",
+        "pio_set_gpio_base(pio1, SNES_PIO_CONTROL_BASE)",
+        "pio_set_gpio_base(pio2, SNES_PIO_CONTROL_BASE)",
+        "sm_config_set_in_pins(&select_config, SNES_A12_PIN)",
+        "sm_config_set_set_pins(&select_config, SNES_SERVICE_SEL_PIN, 1)",
+        "sm_config_set_in_pins(&g_write_addr_config, SNES_PIO_ADDR_LO_BASE)",
+        "sm_config_set_jmp_pin(&g_write_config, SNES_SERVICE_SEL_PIN)",
+        "sm_config_set_in_pins(&g_write_config, SNES_PIO_ADDR_DATA_BASE)",
+        "sm_config_set_in_pins(&g_read_config, SNES_ROMSEL_N_PIN)",
+        "sm_config_set_out_pins(&g_read_config, SNES_DATA_BASE, SNES_DATA_COUNT)",
+        "sm_config_set_sideset_pins(&g_read_config, SNES_PIO_SIDESET_BASE)",
+        "sm_config_set_jmp_pin(&g_read_config, SNES_SERVICE_SEL_PIN)",
         "pio_set_irq0_source_enabled(pio1, pis_interrupt1, true)",
         "pio_set_irq0_source_enabled(pio1, pis_interrupt2, true)",
         "pio_set_irq0_source_enabled(pio2, pis_interrupt0, true)",
@@ -411,14 +468,26 @@ def test_cpp_pio_setup() -> None:
         if token not in text:
             fail(f"PIO C++ setup is missing {token}")
 
-    bus = BUS_H.read_text()
+    board = BOARD_H.read_text()
     pin_tokens = [
-        "SNES_ADDR_LO_BASE = 0", "SNES_CTRL_BASE    = 16",
-        "SNES_ADDR_HI_BASE = 32", "SNES_DATA_BASE    = 40"
+        "#define SNES_ADDR_LO_BASE  0",
+        "#define SNES_CONTROL_BASE  16",
+        "#define SNES_SERVICE_SEL_PIN 31",
+        "#define SNES_ADDR_HI_BASE  32",
+        "#define SNES_DATA_BASE  40",
+        "pico_board_cmake_set(PICO_PLATFORM, rp2350)",
+        "#define PICO_RP2350A 0",
+        "pico_board_cmake_set_default(PICO_FLASH_SIZE_BYTES, (4 * 1024 * 1024))",
     ]
     for token in pin_tokens:
-        if token not in bus:
-            fail(f"SNES pin layout is missing {token}")
+        if token not in board:
+            fail(f"SNES board definition is missing {token}")
+
+    bus = (ROOT / "platform/rp2350/snes_bus.h").read_text()
+    forbidden = ["struct SnesBusPins", "SNES_BUS_PINS", "SNES_ADDR_MASK =", "SNES_DATA_MASK ="]
+    for token in forbidden:
+        if token in bus:
+            fail(f"snes_bus.h still duplicates board layout: {token}")
 
 def test_irq_contract(pio_text: str) -> None:
     # The PIO instruction flags and the C++ IRQ0 source enables must stay paired.
@@ -433,6 +502,7 @@ def main() -> None:
         fail("RP2350 PIO source must declare .pio_version 1")
     programs = parse_programs(pio_text)
     test_instruction_ram(programs)
+    test_jump_targets_resolve(pio_text)
     test_source_driven_routes(pio_text)
     test_write_capture()
     test_special_bank_decode(pio_text)
@@ -440,6 +510,8 @@ def main() -> None:
     test_frontend_coverage()
     test_read_response_word()
     test_wait_gpio_windows(programs)
+    test_pio_wait_pins(programs)
+    test_cmake_board_setup()
     test_cpp_pio_setup()
     test_irq_contract(pio_text)
     print("pio_static_tests: PASS")

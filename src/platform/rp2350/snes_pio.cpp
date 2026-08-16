@@ -17,9 +17,13 @@
 #include "hardware/irq.h"
 #include "hardware/pio.h"
 #include "hardware/pio_instructions.h"
-#include "pico/platform/sections.h"
+#include "pico.h"
 #include "pico/sync.h"
 #include "pico/stdlib.h"
+
+#ifndef SNES_FX3
+#error "This firmware requires PICO_BOARD=snes_fx3"
+#endif
 
 static constexpr uint32_t READ_RESPONSE_DRIVE = 1u;
 static constexpr uint32_t READ_RESPONSE_PINDIRS = 0xFFu << 9;
@@ -30,7 +34,6 @@ static_assert(PICO_PIO_USE_GPIO_BASE == 1, "SuperFX3 requires RP2350B PIO GPIO-b
 
 static std::atomic<bool> g_reset_pending {false};
 
-static SnesBusPins g_pins {};
 static SuperFx* g_fx = nullptr;
 
 static uint g_select_sm = 0;
@@ -65,10 +68,10 @@ static bool g_rom_blocked_pio = false;
 
 // Reconstructs A0-A23 from the RP2350B low/high GPIO address groups.
 static inline uint32_t snes_read_address(uint64_t gpio) {
-    const uint32_t addr_lo = static_cast<uint32_t>(gpio & 0xFFFFu);
-    const uint32_t addr_hi = static_cast<uint32_t>((gpio >> SNES_ADDR_HI_BASE) & 0xFFu);
+    const uint32_t addr_lo = static_cast<uint32_t>(gpio & SNES_ADDR_LO_MASK);
+    const uint32_t addr_hi = static_cast<uint32_t>((gpio & SNES_ADDR_HI_MASK) >> SNES_ADDR_HI_BASE);
 
-    return addr_lo | (addr_hi << 16);
+    return addr_lo | (addr_hi << SNES_ADDR_LO_COUNT);
 }
 
 // Returns whether a bank participates in the normal GSU CPU-visible mapping.
@@ -148,7 +151,7 @@ static void __not_in_flash_func(snes_read_irq_handler)() {
             response = snes_read_response(fx_sync_cpu_read(addr));
         else if (snes_gsu_ram_offset(*g_fx, address, ram_offset))
             response = snes_read_response(fx_sync_cpu_ram_read(ram_offset));
-        else if (g_fx->config().chip != FxChip::FX3 && !gpio_get(g_pins.romsel_n)) {
+        else if (g_fx->config().chip != FxChip::FX3 && !gpio_get(SNES_ROMSEL_N_PIN)) {
             // For GSU1/2, reaching the CPU handler for an ordinary /ROMSEL read
             // means the read SM already classified this transaction as blocked.
             // Do not re-check newer ownership and change the result mid-cycle.
@@ -178,11 +181,11 @@ static void __not_in_flash_func(snes_control_irq_handler)() {
 
     const uint32_t captured = pio_sm_get(pio1, g_write_sm);
 
-    if (g_fx && gpio_get(g_pins.reset_n)) {
-        const uint8_t bank = static_cast<uint8_t>(captured & 0xFFu);
-        const uint8_t data = static_cast<uint8_t>((captured >> 8) & 0xFFu);
-        const uint16_t addr = static_cast<uint16_t>(captured >> 16);
-        const uint32_t address = (static_cast<uint32_t>(bank) << 16) | addr;
+    if (g_fx && gpio_get(SNES_RESET_N_PIN)) {
+        const uint8_t bank = static_cast<uint8_t>(captured >> SNES_CAPTURE_ADDR_HI_SHIFT);
+        const uint8_t data = static_cast<uint8_t>(captured >> SNES_CAPTURE_DATA_SHIFT);
+        const uint16_t addr = static_cast<uint16_t>(captured >> SNES_CAPTURE_ADDR_LO_SHIFT);
+        const uint32_t address = (static_cast<uint32_t>(bank) << SNES_ADDR_LO_COUNT) | addr;
 
         uint32_t ram_offset = 0;
         if (snes_is_gsu_register(*g_fx, address)) {
@@ -233,23 +236,21 @@ static void snes_start_write_addr_dma() {
 
 // Returns the GPIO mask for DATA_DIR, /BUS_OE, and /ROM_OE.
 static uint64_t snes_control_mask() {
-    return (1ull << g_pins.data_dir) |
-           (1ull << g_pins.bus_oe_n) |
-           (1ull << g_pins.rom_oe_n);
+    return SNES_BUS_CTRL_MASK;
 }
 
 // Returns the safe PIO control-pin values used while listening to the SNES.
 static uint64_t snes_idle_control_values() {
-    return (static_cast<uint64_t>(DATA_DIR_IN) << g_pins.data_dir) |
-           (static_cast<uint64_t>(BUS_ENABLE) << g_pins.bus_oe_n) |
-           (static_cast<uint64_t>(ROM_DISABLE) << g_pins.rom_oe_n);
+    return (static_cast<uint64_t>(SNES_DATA_DIR_IN) << SNES_DATA_DIR_PIN) |
+           (static_cast<uint64_t>(SNES_BUS_ENABLE) << SNES_BUS_OE_N_PIN) |
+           (static_cast<uint64_t>(SNES_ROM_DISABLE) << SNES_ROM_OE_N_PIN);
 }
 
 // Returns the safe control-pin values used while PIO is disconnected from the bus.
 static uint64_t snes_isolated_control_values() {
-    return (static_cast<uint64_t>(DATA_DIR_IN) << g_pins.data_dir) |
-           (static_cast<uint64_t>(BUS_DISABLE) << g_pins.bus_oe_n) |
-           (static_cast<uint64_t>(ROM_DISABLE) << g_pins.rom_oe_n);
+    return (static_cast<uint64_t>(SNES_DATA_DIR_IN) << SNES_DATA_DIR_PIN) |
+           (static_cast<uint64_t>(SNES_BUS_DISABLE) << SNES_BUS_OE_N_PIN) |
+           (static_cast<uint64_t>(SNES_ROM_DISABLE) << SNES_ROM_OE_N_PIN);
 }
 
 // Updates the read-state-machine scratch value used for ROM ownership/decode.
@@ -290,7 +291,7 @@ static void snes_sync_rom_ownership_locked() {
 
     // Never modify X during a live read. The GSU read program temporarily uses X
     // as an address-decode constant on direct-ROM cycles.
-    if (!gpio_get(g_pins.rd_n))
+    if (!gpio_get(SNES_RD_N_PIN))
         return;
 
     const bool blocked = g_rom_blocked_requested.load(std::memory_order_acquire);
@@ -304,7 +305,7 @@ static void snes_sync_rom_ownership_locked() {
     // but the read is still stalled briefly. Measure this case on hardware before calling it safe.
     pio_sm_set_enabled(pio2, g_read_sm, false);
 
-    if (!gpio_get(g_pins.rd_n)) {
+    if (!gpio_get(SNES_RD_N_PIN)) {
         pio_sm_set_enabled(pio2, g_read_sm, true);
         return;
     }
@@ -365,17 +366,17 @@ void snes_pio_pause() {
         snes_control_mask()
     );
 
-    gpio_put(g_pins.data_dir, DATA_DIR_IN);
-    gpio_put(g_pins.bus_oe_n, BUS_DISABLE);
-    gpio_put(g_pins.rom_oe_n, ROM_DISABLE);
+    gpio_put(SNES_DATA_DIR_PIN, SNES_DATA_DIR_IN);
+    gpio_put(SNES_BUS_OE_N_PIN, SNES_BUS_DISABLE);
+    gpio_put(SNES_ROM_OE_N_PIN, SNES_ROM_DISABLE);
 
-    gpio_set_dir(g_pins.data_dir, GPIO_OUT);
-    gpio_set_dir(g_pins.bus_oe_n, GPIO_OUT);
-    gpio_set_dir(g_pins.rom_oe_n, GPIO_OUT);
+    gpio_set_dir(SNES_DATA_DIR_PIN, GPIO_OUT);
+    gpio_set_dir(SNES_BUS_OE_N_PIN, GPIO_OUT);
+    gpio_set_dir(SNES_ROM_OE_N_PIN, GPIO_OUT);
 
-    gpio_set_function(g_pins.data_dir, GPIO_FUNC_SIO);
-    gpio_set_function(g_pins.bus_oe_n, GPIO_FUNC_SIO);
-    gpio_set_function(g_pins.rom_oe_n, GPIO_FUNC_SIO);
+    gpio_set_function(SNES_DATA_DIR_PIN, GPIO_FUNC_SIO);
+    gpio_set_function(SNES_BUS_OE_N_PIN, GPIO_FUNC_SIO);
+    gpio_set_function(SNES_ROM_OE_N_PIN, GPIO_FUNC_SIO);
 
     critical_section_exit(&g_read_x_gate);
 }
@@ -414,9 +415,9 @@ void snes_pio_resume() {
         snes_control_mask() | SNES_DATA_MASK
     );
 
-    pio_gpio_init(pio2, g_pins.data_dir);
-    pio_gpio_init(pio2, g_pins.bus_oe_n);
-    pio_gpio_init(pio2, g_pins.rom_oe_n);
+    pio_gpio_init(pio2, SNES_DATA_DIR_PIN);
+    pio_gpio_init(pio2, SNES_BUS_OE_N_PIN);
+    pio_gpio_init(pio2, SNES_ROM_OE_N_PIN);
 
     pio_sm_set_pins_with_mask64(
         pio2, g_read_sm,
@@ -434,8 +435,7 @@ void snes_pio_resume() {
 
 // Cartridge bus initialization
 
-void snes_pio_start(const SnesBusPins& pins, SuperFx& fx) {
-    g_pins = pins;
+void snes_pio_start(SuperFx& fx) {
     g_fx = &fx;
 
     critical_section_init(&g_read_x_gate);
@@ -444,7 +444,7 @@ void snes_pio_start(const SnesBusPins& pins, SuperFx& fx) {
 
     // The .pio WAIT GPIO operands use real GPIO numbers. Current Pico SDK relocates
     // them when programs are loaded into a base-16 RP2350B PIO window.
-    if (pio_set_gpio_base(pio0, 0) < 0 || pio_set_gpio_base(pio1, 16) < 0 || pio_set_gpio_base(pio2, 16) < 0)
+    if (pio_set_gpio_base(pio0, SNES_PIO_ADDR_LO_BASE) < 0 || pio_set_gpio_base(pio1, SNES_PIO_CONTROL_BASE) < 0 || pio_set_gpio_base(pio2, SNES_PIO_CONTROL_BASE) < 0)
         panic("Unable to configure RP2350B PIO GPIO windows");
 
     g_select_sm = snes_claim_sm(pio0);
@@ -481,23 +481,23 @@ void snes_pio_start(const SnesBusPins& pins, SuperFx& fx) {
     g_reset_offset = snes_add_program(pio1, &snes_reset_program);
     pio_sm_config reset_config = snes_reset_program_get_default_config(g_reset_offset);
 
-    sm_config_set_in_pins(&select_config, 12);
-    sm_config_set_set_pins(&select_config, 31, 1);
+    sm_config_set_in_pins(&select_config, SNES_A12_PIN);
+    sm_config_set_set_pins(&select_config, SNES_SERVICE_SEL_PIN, 1);
     sm_config_set_in_shift(&select_config, false, false, 32);
 
-    sm_config_set_in_pins(&g_write_addr_config, SNES_ADDR_LO_BASE);
+    sm_config_set_in_pins(&g_write_addr_config, SNES_PIO_ADDR_LO_BASE);
     sm_config_set_in_shift(&g_write_addr_config, false, false, 32);
     sm_config_set_fifo_join(&g_write_addr_config, PIO_FIFO_JOIN_RX);
 
-    sm_config_set_jmp_pin(&g_write_config, 31);
-    sm_config_set_in_pins(&g_write_config, 32);
+    sm_config_set_jmp_pin(&g_write_config, SNES_SERVICE_SEL_PIN);
+    sm_config_set_in_pins(&g_write_config, SNES_PIO_ADDR_DATA_BASE);
     sm_config_set_in_shift(&g_write_config, false, false, 32);
     sm_config_set_out_shift(&g_write_config, true, false, 32);
 
-    sm_config_set_in_pins(&g_read_config, 20);
-    sm_config_set_out_pins(&g_read_config, 40, 8);
-    sm_config_set_sideset_pins(&g_read_config, 28);
-    sm_config_set_jmp_pin(&g_read_config, 31);
+    sm_config_set_in_pins(&g_read_config, SNES_ROMSEL_N_PIN);
+    sm_config_set_out_pins(&g_read_config, SNES_DATA_BASE, SNES_DATA_COUNT);
+    sm_config_set_sideset_pins(&g_read_config, SNES_PIO_SIDESET_BASE);
+    sm_config_set_jmp_pin(&g_read_config, SNES_SERVICE_SEL_PIN);
     sm_config_set_in_shift(&g_read_config, false, false, 32);
     sm_config_set_out_shift(&g_read_config, true, false, 32);
 
@@ -507,9 +507,9 @@ void snes_pio_start(const SnesBusPins& pins, SuperFx& fx) {
     snes_init_sm(pio1, g_reset_sm, g_reset_offset, &reset_config);
     snes_init_sm(pio2, g_read_sm, g_read_offset, &g_read_config);
 
-    pio_sm_set_pins_with_mask64(pio0, g_select_sm, 0, 1ull << 31);
-    pio_sm_set_pindirs_with_mask64(pio0, g_select_sm, 1ull << 31, 1ull << 31);
-    pio_gpio_init(pio0, 31);
+    pio_sm_set_pins_with_mask64(pio0, g_select_sm, 0, SNES_SERVICE_SEL_MASK);
+    pio_sm_set_pindirs_with_mask64(pio0, g_select_sm, SNES_SERVICE_SEL_MASK, SNES_SERVICE_SEL_MASK);
+    pio_gpio_init(pio0, SNES_SERVICE_SEL_PIN);
 
     const int claimed_write_addr_dma = dma_claim_unused_channel(true);
     if (claimed_write_addr_dma < 0)
@@ -530,13 +530,13 @@ void snes_pio_start(const SnesBusPins& pins, SuperFx& fx) {
     pio_sm_set_pins_with_mask64(pio2, g_read_sm, snes_idle_control_values(), snes_control_mask());
     pio_sm_set_pindirs_with_mask64(pio2, g_read_sm, snes_control_mask(), snes_control_mask() | SNES_DATA_MASK);
 
-    for (uint8_t pin = g_pins.data_dir; pin <= g_pins.rom_oe_n; pin++)
+    for (uint8_t pin = SNES_BUS_CTRL_BASE; pin < SNES_BUS_CTRL_BASE + SNES_BUS_CTRL_COUNT; pin++)
         pio_gpio_init(pio2, pin);
-    for (uint8_t pin = SNES_DATA_BASE; pin < SNES_DATA_BASE + 8; pin++)
+    for (uint8_t pin = SNES_DATA_BASE; pin < SNES_DATA_BASE + SNES_DATA_COUNT; pin++)
         pio_gpio_init(pio2, pin);
 
-    pio_set_input_sync_bypass_with_mask64(pio1, 1ull << 31, 1ull << 31);
-    pio_set_input_sync_bypass_with_mask64(pio2, 1ull << 31, 1ull << 31);
+    pio_set_input_sync_bypass_with_mask64(pio1, SNES_SERVICE_SEL_MASK, SNES_SERVICE_SEL_MASK);
+    pio_set_input_sync_bypass_with_mask64(pio2, SNES_SERVICE_SEL_MASK, SNES_SERVICE_SEL_MASK);
 
     const bool blocked = fx.config().chip != FxChip::FX3 && !fx_sync_rom_access_allowed();
     g_rom_blocked_requested.store(blocked, std::memory_order_release);

@@ -1,2 +1,8 @@
 #pragma once
-#define __not_in_flash_func(func_name) func_name
+
+#ifndef _PICO_H
+#error pico/platform.h should not be included directly; include pico.h instead
+#endif
+
+#include "pico/platform/compiler.h"
+#include "pico/platform/sections.h"

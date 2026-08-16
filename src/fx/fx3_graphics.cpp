@@ -6,7 +6,7 @@
  */
 #include "fx_core.h"
 #include "fx3_layout.h"
-#include "pico/platform/sections.h"
+#include "pico.h"
 
 // FX3 clear-command layout
 //

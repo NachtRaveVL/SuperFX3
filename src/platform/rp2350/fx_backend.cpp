@@ -8,7 +8,7 @@
 #include "fx_backend.h"
 
 #include "hardware/regs/addressmap.h"
-#include "pico/platform/sections.h"
+#include "pico.h"
 
 
 static constexpr uint32_t FX3_QSPI_ROM_SIZE = 3u * 1024u * 1024u;
