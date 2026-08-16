@@ -23,7 +23,7 @@ The firmware is now building cleanly with the real RP2350 toolchain and the comp
 * 3 MiB private FX3 ROM stored in the RP2350's primary QSPI flash
 * Separate external parallel cartridge ROM for the SNES 65816 side
 * FX3 8bpp PLOT and pixel-cache graphics path
-* FX3 chunky-to-planar conversion and clear commands
+* FX3 direct-to-planar draw, read, and clear commands (no chunky framebuffer conversions)
 * SuperFX register access, IRQ, RESET, STOP/GO, and cross-core synchronization
 * Host-side C++ tests for the processor core, opcodes, registers, synchronization, and backend
 * Static PIO tests that verify the bus routing and board pin definitions
