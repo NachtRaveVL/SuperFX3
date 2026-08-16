@@ -3,10 +3,6 @@
 #include <cstdio>
 #include <random>
 
-#define private public
-#include "../fx/fx_core.h"
-#undef private
-
 #include "../fx/fx3_layout.h"
 #include "test_support.h"
 
@@ -17,7 +13,7 @@ static uint8_t reference_plane(const uint8_t* pixels, uint8_t plane) {
     return value;
 }
 
-static void write_cache_row(SuperFx& fx, const uint8_t pixels[8], uint8_t y = 0, uint8_t x = 0) {
+static void write_cache_row(TestSuperFx& fx, const uint8_t pixels[8], uint8_t y = 0, uint8_t x = 0) {
     FxPixelCache cache{};
     cache.x = x;
     cache.y = y;
@@ -33,7 +29,7 @@ static void write_cache_row(SuperFx& fx, const uint8_t pixels[8], uint8_t y = 0,
 // 8bpp GSU pixel-cache path used by the FX3 compatibility implementation.
 static void test_fx3_8bpp_plot_vectors() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
     fx.init(fx3_config, make_test_backend(memory));
 
     test_require(fx.state().screen_base == 0x40,
@@ -83,7 +79,7 @@ static void test_fx3_8bpp_plot_vectors() {
 
 static void test_register_start_and_mapping() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
     fx.init(fx3_config, make_test_backend(memory));
 
     fx.cpu_write(0x701E, 0x34);
@@ -97,7 +93,7 @@ static void test_register_start_and_mapping() {
     fx.state_.r[0] = 0x55AA;
     fx.cpu_write(0x7300, 0x11);
     fx.cpu_write(0x7301, 0x22);
-    test_require(fx.state_.r[0] == 0x55AA && fx.cpu_read(0x7300) == 0,
+    test_require(fx.state_.r[0] == 0x55AA && fx.cpu_read(0x7300) == 0xFF,
                  "FX3 $x300 open-bus quarter incorrectly reached a register");
 
     fx.cpu_write(0x7400, 0x11);
@@ -108,7 +104,7 @@ static void test_register_start_and_mapping() {
 
 static void test_fx3_ignores_ron_ran_waits() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
     fx.init(fx3_config, make_test_backend(memory));
 
     fx.state_.flags.running = true;
@@ -120,7 +116,7 @@ static void test_fx3_ignores_ron_ran_waits() {
     test_require(!fx.wait_for_rom_access_ && !fx.wait_for_ram_access_,
                  "FX3 incorrectly entered a RON/RAN ownership wait");
 
-    SuperFx gsu;
+    TestSuperFx gsu;
     gsu.init(fx2_config, make_test_backend(memory));
     gsu.state_.flags.running = true;
     gsu.state_.gsu_rom_access = false;
@@ -131,7 +127,7 @@ static void test_fx3_ignores_ron_ran_waits() {
 
 static void test_blocked_rom_pattern() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
     fx.init(fx2_config, make_test_backend(memory));
 
     for (uint32_t address = 0; address < 16; ++address) {
@@ -145,11 +141,90 @@ static void test_blocked_rom_pattern() {
     }
 }
 
+static void test_gsu_memory_mapping_and_waits() {
+    TestMemory memory{};
+    TestSuperFx fx;
+    fx.init(fx3_config, make_test_backend(memory));
+
+    uint32_t offset = 0;
+    test_require(fx.gsu_rom_offset(0x000000, offset) && offset == 0x000000,
+                 "GSU low-half ROM mirror is wrong");
+    test_require(fx.gsu_rom_offset(0x008000, offset) && offset == 0x000000,
+                 "GSU upper-half ROM mapping is wrong");
+    test_require(fx.gsu_rom_offset(0x3FFFFF, offset) && offset == 0x1FFFFF,
+                 "GSU 32 KiB bank mapping is wrong at the 2 MiB boundary");
+    test_require(fx.gsu_rom_offset(0x600000, offset) && offset == 0x200000,
+                 "FX3 extended ROM bank $60 mapping is wrong");
+    test_require(fx.gsu_rom_offset(0x6FFFFF, offset) && offset == 0x2FFFFF,
+                 "FX3 extended ROM bank $6F mapping is wrong");
+    test_require(!fx.gsu_rom_offset(0x700000, offset),
+                 "GSU ROM mapper accepted program RAM as ROM");
+
+    TestSuperFx gsu2;
+    gsu2.init(fx2_config, make_test_backend(memory));
+    test_require(!gsu2.gsu_rom_offset(0x600000, offset),
+                 "GSU2 ROM mapper incorrectly accepted the FX3 extension");
+
+    gsu2.state_.flags.running = true;
+    gsu2.state_.gsu_rom_access = false;
+    (void)gsu2.read_rom(0x400000);
+    test_require(gsu2.wait_for_rom_access_ && gsu2.stopped_,
+                 "read_rom did not enter the legacy ROM ownership wait");
+
+    TestSuperFx gsu2_ram;
+    gsu2_ram.init(fx2_config, make_test_backend(memory));
+    gsu2_ram.state_.flags.running = true;
+    gsu2_ram.state_.gsu_ram_access = false;
+    (void)gsu2_ram.read_ram(0x0000);
+    test_require(gsu2_ram.wait_for_ram_access_ && gsu2_ram.stopped_,
+                 "read_ram did not enter the legacy RAM ownership wait");
+
+    memory.rom[0x000123] = 0x11;
+    memory.rom[0x400123] = 0x22;
+    test_require(fx.read_rom(0x400123) == 0x11,
+                 "GSU ROM read did not translate to a linear backend offset");
+    test_require(fx.cpu_rom_read(0x400123) == 0x22,
+                 "SNES CPU ROM read incorrectly used the GSU ROM mapper");
+
+    fx.state_.rom_bank = 0x40;
+    fx.state_.r[14] = 0x0040;
+    fx.state_.rom_delay = 3;
+    fx.state_.flags.rom_read_pending = true;
+    memory.rom[0x0040] = 0xA5;
+    memory.rom[0x0080] = 0x5A;
+    const uint64_t rom_cycles = fx.state_.cycles;
+    test_require(fx.read_rom(0x400080) == 0x5A,
+                 "ROM read after a pending R14 operation returned the wrong byte");
+    test_require(fx.state_.cycles == rom_cycles + 3 && fx.state_.rom_read_buffer == 0xA5 &&
+                     !fx.state_.flags.rom_read_pending,
+                 "read_rom did not retire the pending ROM operation first");
+
+    fx.state_.ram_bank = 1;
+    fx.state_.ram_write_address = 0x1234;
+    fx.state_.ram_write_value = 0xC7;
+    fx.state_.ram_delay = 4;
+    memory.ram[0x01234] = 0x18;
+    memory.ram[0x11234] = 0x29;
+    const uint64_t ram_cycles = fx.state_.cycles;
+    test_require(fx.read_ram(0x1234) == 0xC7,
+                 "RAMB-relative read did not observe the completed pending write");
+    test_require(fx.state_.cycles == ram_cycles + 4,
+                 "read_ram did not retire the pending RAM operation first");
+
+    fx.state_.ram_bank = 0;
+    memory.ram[0x10055] = 0x6E;
+    test_require(fx.read_program_ram(0x710055) == 0x6E,
+                 "$71 program RAM read incorrectly applied RAMB");
+    test_require(fx.read_program_ram(0x720055) == 0xFF,
+                 "unmapped program RAM read did not return the open-bus value");
+}
+
 int main() {
     test_fx3_8bpp_plot_vectors();
     test_register_start_and_mapping();
     test_fx3_ignores_ron_ran_waits();
     test_blocked_rom_pattern();
+    test_gsu_memory_mapping_and_waits();
     std::puts("core_tests: PASS");
     return 0;
 }

@@ -17,6 +17,7 @@ FLAGS=(
     --coverage
     -Wall -Wextra -Wpedantic -Werror
     -Wconversion -Wsign-conversion
+    -DSUPERFX3_TEST
     -Itests/sdk_stubs -Itests/stubs -I. -Ifx -Iplatform/rp2350
 )
 

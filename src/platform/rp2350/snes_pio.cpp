@@ -25,8 +25,8 @@
 #error "This firmware requires PICO_BOARD=snes_fx3"
 #endif
 
-static constexpr uint32_t READ_RESPONSE_DRIVE = 1u;
-static constexpr uint32_t READ_RESPONSE_PINDIRS = 0xFFu << 9;
+static constexpr uint32_t READ_RESPONSE_DRIVE = 1u; ///< Read-response flag requesting data-bus drive.
+static constexpr uint32_t READ_RESPONSE_PINDIRS = 0xFFu << 9; ///< PIO pindirs mask for D0-D7.
 
 static_assert(NUM_BANK0_GPIOS >= 48, "SuperFX3 requires the 48-GPIO RP2350B package.");
 static_assert(NUM_PIOS >= 3, "SuperFX3 requires all three RP2350 PIO blocks.");
@@ -157,7 +157,7 @@ static void __not_in_flash_func(snes_read_irq_handler)() {
             // Do not re-check newer ownership and change the result mid-cycle.
             response = snes_read_response(fx_sync_blocked_rom_value(address));
         }
-        
+
         // NOTE: FX3 $72-$7D /ROMSEL cycles intentionally fall through with response=0.
         // FX3.PDF maps ROM only through $6F and SRAM only at $70-$71, so these
         // cartridge-space reads must not expose the parallel 65816 ROM. Exact
@@ -301,7 +301,7 @@ static void snes_sync_rom_ownership_locked() {
     }
 
     // FIXME: Verify that pausing the read SM during an ownership update cannot violate SNES read timing.
-    // If /RD falls during the check/disable window we preserve X and resume the same transaction,
+    // If /RD falls during the check/disable window, preserve X and resume the same transaction,
     // but the read is still stalled briefly. Measure this case on hardware before calling it safe.
     pio_sm_set_enabled(pio2, g_read_sm, false);
 

@@ -14,7 +14,7 @@
 // the retained GSU pixel cache already produces final 8bpp planar data. Commands 3-5
 // still perform the FX3-specific patterned clears in CPU-visible bank $71.
 
-static constexpr uint8_t FX3_CLEAR_PATTERN[64] = {
+static constexpr uint8_t FX3_CLEAR_PATTERN[64] = { ///< FX3 patterned-clear tile payload.
     0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00,
     0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

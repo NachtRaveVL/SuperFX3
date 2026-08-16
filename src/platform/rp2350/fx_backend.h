@@ -19,15 +19,15 @@ struct Rp2350FxBackendContext {
 
     std::atomic<uint8_t>* ram;                               ///< Shared FX SRAM accessed by both RP2350 cores.
 
-    uint8_t (*rom_read)(void* context, uint32_t address);    ///< Maps a logical GSU address and reads one FX ROM byte.
+    uint8_t (*rom_read)(void* context, uint32_t offset);     ///< Reads one byte from a linear FX ROM offset.
     void (*irq_write)(void* context, bool asserted);         ///< Callback used to assert or release the SNES IRQ line.
 };
 
 /// Configures the backend to read the 3 MiB FX3 ROM from its reserved QSPI/XIP partition.
 bool fx3_qspi_rom_init(Rp2350FxBackendContext& context);
 
-/// Maps an FX3 logical ROM address onto the documented 3 MiB linear FX ROM image.
-uint8_t fx3_qspi_rom_read(void* context, uint32_t address);
+/// Reads one byte from a linear offset in the 3 MiB FX3 QSPI ROM image.
+uint8_t fx3_qspi_rom_read(void* context, uint32_t offset);
 
 /// Builds the callback table used by the portable SuperFX core.
 FxBackend fx_backend_create(Rp2350FxBackendContext* context);

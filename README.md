@@ -15,19 +15,22 @@ The firmware is now building cleanly with the real RP2350 toolchain and the comp
 
 # Features
 
-* Super FX / GSU instruction core with FX3 support
-* RP2350B running at 150 MHz
-* Dual-core operation with SNES bus service on core 0 and SuperFX execution on core 1
-* PIO-based SNES cartridge bus decoding, read handling, write capture, and control
-* 128 KiB of shared SuperFX RAM stored in RP2350 internal SRAM
-* 3 MiB private FX3 ROM stored in the RP2350's primary QSPI flash
-* Separate external parallel cartridge ROM for the SNES 65816 side
-* FX3 8bpp PLOT and pixel-cache graphics path
-* FX3 direct-to-planar draw, read, and clear commands (no chunky framebuffer conversions)
+* SuperFX / GSU instruction core with FX3 support
+* RP2350B (e.g. SC1510-A4 80-QFN) running at 150 MHz
+* Dual-core operation with SNES bus service on core 0 and FX code execution on core 1
+* PIO/interrupt-based SNES cartridge bus decoding, read handling, write capture, and control
+* 128 KiB (1 Mbit) of shared cartridge RAM stored in RP2350 internal SRAM (392 KiB left for firmware)
+* 4 MiB (32 Mbit) of flash storage on the RP2350 QSPI flash interface
+  * 3 MiB reserved for FX code and data
+  * 1 MiB reserved for firmware
+* Separate 1–16 MiB (8–128 Mbit) external parallel flash ROM for the SNES CPU
+* FX3 8bpp PLOT and pixel-cache graphics path with dithering and native SNES planar output
+* FX3 direct-to-planar draw, read, and clear commands, skipping all chunky conversion
 * SuperFX register access, IRQ, RESET, STOP/GO, and cross-core synchronization
-* Host-side C++ tests for the processor core, opcodes, registers, synchronization, and backend
-* Static PIO tests that verify the bus routing and board pin definitions
-* Coverage reporting for the portable processor core and host-testable RP2350 support code
+* Fully tested codebase with code coverage reporting
+  * Host-side C++ tests for the processor core, opcodes, registers, synchronization, and backend
+  * Static PIO tests that verify bus routing and board pin definitions
+  * Coverage reporting for the portable processor core and host-testable RP2350 support code
 
 The original GSU behavior is retained where useful for FX1/FX2 support, although the current cartridge and timing path are being developed specifically around FX3. Legacy cycle-accurate timing has not yet been validated on hardware.
 
@@ -44,7 +47,7 @@ PIO handles the timing-sensitive cartridge bus work. One PIO block decodes the S
 
 The SuperFX banks `$70-$71` are backed by 128 KiB of RP2350 internal SRAM. The FX3 processor's private 3 MiB ROM image lives in a reserved partition at the top of the RP2350's primary QSPI flash.
 
-The QSPI FX3 ROM is not the main SNES game ROM. The cartridge's normal parallel ROM remains available to the SNES 65816 side while the FX3 processor accesses its own ROM image.
+The QSPI FX3 ROM is not the main SNES game ROM. The cartridge's normal parallel ROM remains available to the SNES 65816 side while the FX3 processor accesses its own ROM image. The 65816 parallel-ROM path is pass-through: firmware gates `/ROM_OE` but does not remap CPU ROM addresses, so the PCB wiring or programmed image must already implement the intended SNES ROM map.
 
 ---
 
@@ -93,7 +96,7 @@ GPIO31 is internal to the cartridge firmware and is not connected to the SNES ca
 ## Requirements
 
 * Raspberry Pi Pico SDK 2.3.0 or newer
-* ARM GCC toolchain with `arm-none-eabi-gcc` and `arm-none-eabi-g++`
+* ARM GCC toolchain with `arm-none-eabi-gcc`/`arm-none-eabi-g++`
 * CMake
 * Python 3 for the QSPI image packing tool
 
@@ -149,15 +152,17 @@ The portable core and the host-testable RP2350 support code have a fairly extens
 From the `src` directory:
 
 ```bash
-./tests/run_tests.sh
+bash tests/run_tests.sh
 ```
+
+Calling the script through `bash` avoids executable-bit issues when the tree is unpacked on Windows/WSL.
 
 This runs the C++ processor tests, opcode tests, synchronization tests, register/backend tests, graphics packer tests, PIO static tests, and a strict production-source compile/link check using Pico SDK stubs.
 
 For coverage:
 
 ```bash
-./tests/run_coverage.sh
+bash tests/run_coverage.sh
 ```
 
 The coverage report is written to:

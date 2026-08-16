@@ -7,6 +7,8 @@
 #include "fx_core.h"
 #include "pico.h"
 
+// NOTE: Generic open-bus reads use Nintendo-style 0xFF instead of MesenCE's 0x00 fallback.
+
 // NOTE: The FX and 65816 may access ROM simultaneously, so CPU ROM is never
 // blocked by FX3 execution. GSU1/2 retain original ownership gating.
 bool __not_in_flash_func(SuperFx::rom_access_allowed)() const {
@@ -35,19 +37,39 @@ uint8_t __not_in_flash_func(SuperFx::blocked_rom_value)(uint32_t addr) const {
     }
 }
 
+// $00-$3F mirror 32 KiB ROM banks into both halves.
+// $40-$5F map the first 2 MiB linearly; FX3 extends the linear window through $6F.
+bool SuperFx::gsu_rom_offset(uint32_t address, uint32_t& offset) {
+    const uint8_t bank = static_cast<uint8_t>(address >> 16);
+    const uint16_t addr = static_cast<uint16_t>(address);
+
+    if (bank <= 0x3F) {
+        offset = (static_cast<uint32_t>(bank) << 15) | (addr & 0x7FFFu);
+        return true;
+    }
+
+    if (bank >= 0x40 && bank <= config_.max_program_rom_bank) {
+        offset = (static_cast<uint32_t>(bank - 0x40) << 16) | addr;
+        return true;
+    }
+
+    return false;
+}
+
 uint8_t SuperFx::cpu_rom_read(uint32_t addr) {
     if (!rom_access_allowed())
         return blocked_rom_value(addr);
-    return backend_.rom_read(backend_.context, addr);
+    if (!backend_.cpu_rom_read)
+        return 0xFF;
+    return backend_.cpu_rom_read(backend_.context, addr);
 }
 
 uint8_t __not_in_flash_func(SuperFx::cpu_ram_read)(uint32_t addr) {
     if (!ram_access_allowed()) {
-        // FIXME: Define what a blocked GSU RAM read should return.
-        // We return 0 to match MesenCE, but MesenCE itself marks the open-bus behavior unresolved.
-        // Verify this on hardware or from another authoritative source before treating 0 as final.
-        return 0;
+        return 0xFF;
     }
+    if (!backend_.ram_read)
+        return 0xFF;
     return backend_.ram_read(backend_.context, addr);
 }
 
@@ -91,7 +113,7 @@ void SuperFx::wait_ram_operation() {
 }
 
 void __not_in_flash_func(SuperFx::cpu_ram_write)(uint32_t addr, uint8_t value) {
-    if (!ram_access_allowed()) return;
+    if (!ram_access_allowed() || !backend_.ram_write) return;
     backend_.ram_write(backend_.context, addr, value);
 }
 
@@ -108,10 +130,7 @@ void SuperFx::step(uint32_t cycles) {
         state_.rom_delay -= static_cast<uint8_t>(amount);
 
         if (state_.rom_delay == 0) {
-            wait_for_rom_access();
-
-            state_.rom_read_buffer = backend_.rom_read(backend_.context,
-                                                       (static_cast<uint32_t>(state_.rom_bank) << 16) | state_.r[14]);
+            state_.rom_read_buffer = read_rom((static_cast<uint32_t>(state_.rom_bank) << 16) | state_.r[14]);
             state_.flags.rom_read_pending = false;
         }
     }
@@ -124,16 +143,31 @@ void SuperFx::step(uint32_t cycles) {
         if (state_.ram_delay == 0) {
             wait_for_ram_access();
 
-            backend_.ram_write(backend_.context,
-                               (static_cast<uint32_t>(state_.ram_bank) << 16) | state_.ram_write_address,
-                               state_.ram_write_value);
+            if (backend_.ram_write) {
+                backend_.ram_write(backend_.context,
+                                   (static_cast<uint32_t>(state_.ram_bank) << 16) | state_.ram_write_address,
+                                   state_.ram_write_value);
+            }
         }
     }
+}
+
+uint8_t SuperFx::read_rom(uint32_t address) {
+    wait_rom_operation();
+
+    uint32_t offset;
+    if (!gsu_rom_offset(address, offset) || !backend_.rom_read)
+        return 0xFF;
+
+    wait_for_rom_access();
+
+    return backend_.rom_read(backend_.context, offset);
 }
 
 // Mesen-derived: closely follows MesenCE Gsu::ReadRomBuffer().
 uint8_t SuperFx::read_rom_buffer() {
     wait_rom_operation();
+
     return state_.rom_read_buffer;
 }
 
@@ -142,10 +176,23 @@ uint8_t SuperFx::read_ram(uint16_t address) {
     wait_ram_operation();
     wait_for_ram_access();
 
-    // FIXME: Do not complete this physical RAM read until access is actually granted, if RAN is meant to stall.
-    // The current code latches WAIT and immediately calls the backend, which matches MesenCE's logical
-    // memory model but may not match real GSU1/2 ownership timing.
+    if (!backend_.ram_read)
+        return 0xFF;
+
     return backend_.ram_read(backend_.context, (static_cast<uint32_t>(state_.ram_bank) << 16) | address);
+}
+
+uint8_t SuperFx::read_program_ram(uint32_t address) {
+    wait_ram_operation();
+
+    const uint8_t bank = static_cast<uint8_t>(address >> 16);
+    if ((bank != 0x70 && bank != 0x71) || !backend_.ram_read)
+        return 0xFF;
+
+    wait_for_ram_access();
+
+    const uint32_t offset = (static_cast<uint32_t>(bank - 0x70) << 16) | static_cast<uint16_t>(address);
+    return backend_.ram_read(backend_.context, offset);
 }
 
 // Mesen-derived: closely follows MesenCE Gsu::WriteRam().
@@ -181,20 +228,20 @@ uint8_t SuperFx::read_program_byte() {
         wait_for_rom_access();
 
         step(state_.clock_select ? 5 : 6);
-        return backend_.rom_read(backend_.context, (static_cast<uint32_t>(bank) << 16) | state_.r[15]);
+
+        return read_rom((static_cast<uint32_t>(bank) << 16) | state_.r[15]);
     } else {
-        // Program execution outside the ROM bank range.
-        // Only banks $70-$71 map to GSU RAM.
-        // Other banks are unmapped.
         wait_ram_operation();
         wait_for_ram_access();
 
+        // Program execution outside the ROM bank range.
+        // Only banks $70-$71 map to GSU RAM.
+        // Other banks are unmapped.
         step(state_.clock_select ? 5 : 6);
 
         if (bank == 0x70 || bank == 0x71)
-            return backend_.ram_read(backend_.context,
-                                 (static_cast<uint32_t>(bank - 0x70) << 16) | state_.r[15]);
-        return 0x00; // Unmapped GSU address.
+            return read_program_ram((static_cast<uint32_t>(bank) << 16) | state_.r[15]);
+        return 0xFF; // Unmapped GSU address.
     }
 }
 
@@ -209,19 +256,19 @@ void SuperFx::fill_cache_line(uint16_t cache_addr) {
 
         const uint32_t base = (static_cast<uint32_t>(bank) << 16) + state_.cache_base + dest;
         for (unsigned i = 0; i < 16; i++)
-            cache_[dest + i] = backend_.rom_read(backend_.context, base + i);
+            cache_[dest + i] = read_rom(base + i);
     } else {
         wait_ram_operation();
         wait_for_ram_access();
 
         if (bank == 0x70 || bank == 0x71) {
-            const uint32_t base = (static_cast<uint32_t>(bank - 0x70) << 16) + state_.cache_base + dest;
+            const uint32_t base = (static_cast<uint32_t>(bank) << 16) + state_.cache_base + dest;
             for (unsigned i = 0; i < 16; i++)
-                cache_[dest + i] = backend_.ram_read(backend_.context, base + i);
+                cache_[dest + i] = read_program_ram(base + i);
         } else {
             // Unmapped program bank.
             for (unsigned i = 0; i < 16; i++)
-                cache_[dest + i] = 0x00;
+                cache_[dest + i] = 0xFF;
         }
     }
 

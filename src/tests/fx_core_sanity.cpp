@@ -11,10 +11,6 @@
 #include <cstdio>
 #include <vector>
 
-#define private public
-#include "../fx/fx_core.h"
-#undef private
-
 #include "../fx/fx3_layout.h"
 #include "../platform/rp2350/fx_backend.h"
 #include "test_support.h"
@@ -26,8 +22,8 @@ static uint8_t reference_plane(const uint8_t pixels[8], uint8_t plane) {
     return value;
 }
 
-static bool test_blocked_rom_pattern(SuperFx& fx) {
-    static constexpr uint8_t expected[16] = {
+static bool test_blocked_rom_pattern(TestSuperFx& fx) {
+    static constexpr uint8_t expected[16] = { ///< Expected blocked-ROM pattern for A0-A3.
         0x00, 0x01, 0x00, 0x01,
         0x04, 0x01, 0x00, 0x01,
         0x00, 0x01, 0x08, 0x01,
@@ -44,8 +40,8 @@ static bool test_blocked_rom_pattern(SuperFx& fx) {
     return true;
 }
 
-static bool test_fx3_clear(SuperFx& fx, TestMemory& memory) {
-    static constexpr uint8_t clear_pattern[64] = {
+static bool test_fx3_clear(TestSuperFx& fx, TestMemory& memory) {
+    static constexpr uint8_t clear_pattern[64] = { ///< Expected FX3 patterned-clear tile payload.
         0xFF,0,0xFF,0,0xFF,0,0xFF,0,0xFF,0,0xFF,0,0xFF,0,0xFF,0,
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -57,7 +53,7 @@ static bool test_fx3_clear(SuperFx& fx, TestMemory& memory) {
         uint8_t last;
     };
 
-    static constexpr ClearRange ranges[3] = {
+    static constexpr ClearRange ranges[3] = { ///< Expected tile-column ranges for clear commands 3-5.
         {0, 8}, {9, 17}, {18, 26}
     };
 
@@ -93,7 +89,7 @@ static bool test_fx3_clear(SuperFx& fx, TestMemory& memory) {
     return true;
 }
 
-static bool test_fx3_plot_pixel_cache(SuperFx& fx, TestMemory& memory) {
+static bool test_fx3_plot_pixel_cache(TestSuperFx& fx, TestMemory& memory) {
     fx.reset();
 
     // MD=3 selects 8bpp. HT=1 selects the 160-line layout whose columns are
@@ -129,7 +125,7 @@ static bool test_fx3_plot_pixel_cache(SuperFx& fx, TestMemory& memory) {
     }
 
     // The next X tile must use the same 20-tile column stride used by CLEAR.
-    static constexpr uint8_t next_pixels[8] = {0xFF, 0, 0, 0, 0, 0, 0, 0};
+    static constexpr uint8_t next_pixels[8] = {0xFF, 0, 0, 0, 0, 0, 0, 0}; ///< Second pixel-cache test row.
     for (uint8_t x = 0; x < 8; ++x) {
         fx.state_.color = next_pixels[x];
         fx.draw_pixel(static_cast<uint8_t>(8u + x), 0);
@@ -146,53 +142,35 @@ static bool test_fx3_plot_pixel_cache(SuperFx& fx, TestMemory& memory) {
     return true;
 }
 
-static bool test_fx3_qspi_rom_mapping() {
+static bool test_fx3_qspi_rom_backend() {
     std::vector<uint8_t> rom(3u << 20, 0);
-
-    struct MapCase {
-        uint32_t logical;
-        uint32_t linear;
-        uint8_t value;
-    };
-
-    static constexpr MapCase cases[] = {
-        {0x000000, 0x000000, 0x11},
-        {0x008000, 0x000000, 0x11},
-        {0x3F7FFF, 0x1FFFFF, 0x22},
-        {0x3FFFFF, 0x1FFFFF, 0x22},
-        {0x400000, 0x000000, 0x11},
-        {0x5FFFFF, 0x1FFFFF, 0x22},
-        {0x600000, 0x200000, 0x33},
-        {0x6FFFFF, 0x2FFFFF, 0x44}
-    };
-
-    for (const auto& test : cases)
-        rom[test.linear] = test.value;
+    rom[0x000000] = 0x11;
+    rom[0x1FFFFF] = 0x22;
+    rom[0x200000] = 0x33;
+    rom[0x2FFFFF] = 0x44;
 
     Rp2350FxBackendContext context {
         rom.data(), static_cast<uint32_t>(rom.size()), 0,
         nullptr, fx3_qspi_rom_read, nullptr
     };
 
-    for (const auto& test : cases) {
-        const uint8_t got = fx3_qspi_rom_read(&context, test.logical);
-        if (got != test.value) {
-            std::printf("FX3 ROM map mismatch: %06X -> got %02X expected %02X\n",
-                        test.logical, got, test.value);
-            return false;
-        }
+    if (fx3_qspi_rom_read(&context, 0x000000) != 0x11 ||
+        fx3_qspi_rom_read(&context, 0x1FFFFF) != 0x22 ||
+        fx3_qspi_rom_read(&context, 0x200000) != 0x33 ||
+        fx3_qspi_rom_read(&context, 0x2FFFFF) != 0x44) {
+        std::puts("FX3 QSPI backend did not read linear ROM offsets");
+        return false;
     }
 
-    if (fx3_qspi_rom_read(&context, 0x700000) != 0xFF ||
-        fx3_qspi_rom_read(&context, 0xC00000) != 0xFF) {
-        std::puts("FX3 ROM mapper accepted a non-FX-ROM logical bank");
+    if (fx3_qspi_rom_read(&context, 0x300000) != 0xFF) {
+        std::puts("FX3 QSPI backend out-of-range fallback is wrong");
         return false;
     }
 
     return true;
 }
 
-static bool test_fx3_merge_dispatch(SuperFx& fx, TestMemory& memory) {
+static bool test_fx3_merge_dispatch(TestSuperFx& fx, TestMemory& memory) {
     // The retained PLOT/pixel-cache path already performs C2P, so commands 0-2
     // must be harmless. Commands 3-5 retain their patterned clear behavior.
     for (uint16_t command = 0; command <= 5; ++command) {
@@ -230,7 +208,7 @@ static bool test_fx3_merge_dispatch(SuperFx& fx, TestMemory& memory) {
     return true;
 }
 
-static bool test_fx3_primary_spec_rules(SuperFx& fx, TestMemory& memory) {
+static bool test_fx3_primary_spec_rules(TestSuperFx& fx, TestMemory& memory) {
     fx.reset();
 
     if (fx.config().max_program_rom_bank != 0x6F) {
@@ -279,7 +257,7 @@ static bool test_fx3_primary_spec_rules(SuperFx& fx, TestMemory& memory) {
     return true;
 }
 
-static bool test_fx3_register_basics(SuperFx& fx, TestMemory& memory) {
+static bool test_fx3_register_basics(TestSuperFx& fx, TestMemory& memory) {
     fx.reset();
 
     fx.cpu_write(0x7000, 0x34);
@@ -298,7 +276,7 @@ static bool test_fx3_register_basics(SuperFx& fx, TestMemory& memory) {
     fx.state_.r[0] = 0xA55A;
     fx.cpu_write(0x7300, 0x11);
     fx.cpu_write(0x7301, 0x22);
-    if (fx.state_.r[0] != 0xA55A || fx.cpu_read(0x7300) != 0) {
+    if (fx.state_.r[0] != 0xA55A || fx.cpu_read(0x7300) != 0xFF) {
         std::puts("FX3 $x300 open-bus quarter incorrectly reached a register");
         return false;
     }
@@ -318,7 +296,7 @@ static bool test_fx3_register_basics(SuperFx& fx, TestMemory& memory) {
         return false;
     }
 
-    if (fx.cpu_read(0x7000) != 0) {
+    if (fx.cpu_read(0x7000) != 0xFF) {
         std::puts("Running-state register gate failed");
         return false;
     }
@@ -335,17 +313,17 @@ static bool test_fx3_register_basics(SuperFx& fx, TestMemory& memory) {
 
 int main() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
     fx.init(fx3_config, make_test_backend(memory));
 
     if (!test_blocked_rom_pattern(fx)) return 1;
     if (!test_fx3_clear(fx, memory)) return 2;
     if (!test_fx3_plot_pixel_cache(fx, memory)) return 3;
-    if (!test_fx3_qspi_rom_mapping()) return 4;
+    if (!test_fx3_qspi_rom_backend()) return 4;
     if (!test_fx3_merge_dispatch(fx, memory)) return 5;
     if (!test_fx3_primary_spec_rules(fx, memory)) return 6;
     if (!test_fx3_register_basics(fx, memory)) return 7;
 
-    std::puts("FX core/PDF sanity tests passed");
+    std::puts("fx_core_sanity: PASS");
     return 0;
 }

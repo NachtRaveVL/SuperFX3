@@ -18,22 +18,22 @@
 // commands, not a separately allocated hardware framebuffer.
 namespace fx3_layout {
 
-static constexpr uint32_t RAM_BANK_SIZE = 0x10000;
-static constexpr uint32_t PLANAR_BASE = 0x10000;            // FX3 reset SCBR=$40 -> $10000 within shared FX SRAM.
+static constexpr uint32_t RAM_BANK_SIZE = 0x10000; ///< Bytes in each $70/$71 FX SRAM bank.
+static constexpr uint32_t PLANAR_BASE = 0x10000; ///< Start of planar framebuffer data in bank $71.
 
-static constexpr uint8_t X_TILES = 27;
-static constexpr uint8_t Y_TILES = 18;
-static constexpr uint16_t ACTIVE_WIDTH = static_cast<uint16_t>(X_TILES) * 8;
-static constexpr uint16_t ACTIVE_HEIGHT = static_cast<uint16_t>(Y_TILES) * 8;
+static constexpr uint8_t X_TILES = 27; ///< Visible framebuffer width in 8-pixel tiles.
+static constexpr uint8_t Y_TILES = 18; ///< Visible framebuffer height in 8-pixel tiles.
+static constexpr uint16_t FRAMEBUFFER_WIDTH = static_cast<uint16_t>(X_TILES) * 8; ///< Visible framebuffer width in pixels.
+static constexpr uint16_t FRAMEBUFFER_HEIGHT = static_cast<uint16_t>(Y_TILES) * 8; ///< Visible framebuffer height in pixels.
 
 // NOTE: MesenCE's FX3 clear implementation writes bank $71 using 18 active tile rows
 // in a 20-row column-major layout. FX3.PDF documents the 18-row command geometry but
 // not the 20-row planar storage stride.
-static constexpr uint8_t PLANAR_Y_TILE_STRIDE = 20;
+static constexpr uint8_t PLANAR_Y_TILE_STRIDE = 20; ///< Planar storage stride in tile rows.
 
 static_assert(PLANAR_BASE + static_cast<uint32_t>(X_TILES) * PLANAR_Y_TILE_STRIDE * 64u <= RAM_BANK_SIZE * 2,
               "FX3 planar framebuffer must fit in FX SRAM bank $71.");
-static_assert(ACTIVE_WIDTH == 216 && ACTIVE_HEIGHT == 144,
-              "FX3 C2P active area must remain 27 x 18 tiles.");
+static_assert(FRAMEBUFFER_WIDTH == 216 && FRAMEBUFFER_HEIGHT == 144,
+              "FX3 framebuffer area must remain 27 x 18 tiles.");
 
 } // namespace fx3_layout

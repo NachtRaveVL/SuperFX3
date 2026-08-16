@@ -13,11 +13,11 @@
 #include "pico.h"
 #include "pico/sync.h"
 
-static constexpr uint32_t FX_SYNC_COMMAND_COUNT = 256;
-static constexpr uint32_t FX_SYNC_COMMAND_MASK = FX_SYNC_COMMAND_COUNT - 1;
+static constexpr uint32_t FX_SYNC_COMMAND_COUNT = 256; ///< Entries in the cross-core command ring.
+static constexpr uint32_t FX_SYNC_COMMAND_MASK = FX_SYNC_COMMAND_COUNT - 1; ///< Wrap mask for command-ring indices.
 
-static constexpr uint32_t FX_SYNC_ACCESS_ROM = 1u << 0;
-static constexpr uint32_t FX_SYNC_ACCESS_RAM = 1u << 1;
+static constexpr uint32_t FX_SYNC_ACCESS_ROM = 1u << 0; ///< Published SNES ROM-access permission bit.
+static constexpr uint32_t FX_SYNC_ACCESS_RAM = 1u << 1; ///< Published SNES RAM-access permission bit.
 
 enum class FxSyncCommandType : uint8_t {
     CpuWrite,                          // Forward a captured SNES CPU write to the FX core.
@@ -62,22 +62,22 @@ static inline void fx_sync_unlock_state() {
 
 // Packs the low SFR byte for the lock-free runtime snapshot.
 static inline uint8_t fx_sync_flags_low(const FxState& state) {
-    return (state.flags.zero << 1) |
-           (state.flags.carry << 2) |
-           (state.flags.sign << 3) |
-           (state.flags.overflow << 4) |
-           (state.flags.running << 5) |
-           (state.flags.rom_read_pending << 6);
+    return static_cast<uint8_t>((state.flags.zero << 1) |
+                                (state.flags.carry << 2) |
+                                (state.flags.sign << 3) |
+                                (state.flags.overflow << 4) |
+                                (state.flags.running << 5) |
+                                (state.flags.rom_read_pending << 6));
 }
 
 // Packs the high SFR byte for the lock-free runtime snapshot.
 static inline uint8_t fx_sync_flags_high(const FxState& state) {
-    return (state.flags.alt1 << 0) |
-           (state.flags.alt2 << 1) |
-           (state.flags.imm_low << 2) |
-           (state.flags.imm_high << 3) |
-           (state.flags.prefix << 4) |
-           (state.flags.irq << 7);
+    return static_cast<uint8_t>((state.flags.alt1 << 0) |
+                                (state.flags.alt2 << 1) |
+                                (state.flags.imm_low << 2) |
+                                (state.flags.imm_high << 3) |
+                                (state.flags.prefix << 4) |
+                                (state.flags.irq << 7));
 }
 
 // Builds the current SNES ROM/RAM ownership snapshot.
@@ -85,17 +85,10 @@ static inline uint32_t fx_sync_access_state(const SuperFx& fx) {
     const FxState& state = fx.state();
     uint32_t access = 0;
 
-    if (fx.config().chip == FxChip::FX3 ||
-        !state.flags.running ||
-        !state.gsu_rom_access) {
+    if (fx.config().chip == FxChip::FX3 || !state.flags.running || !state.gsu_rom_access)
         access |= FX_SYNC_ACCESS_ROM;
-    }
-
-    if (fx.config().chip == FxChip::FX3 ||
-        !state.flags.running ||
-        !state.gsu_ram_access) {
+    if (fx.config().chip == FxChip::FX3 || !state.flags.running || !state.gsu_ram_access)
         access |= FX_SYNC_ACCESS_RAM;
-    }
 
     return access;
 }
@@ -234,12 +227,13 @@ bool fx_sync_core1_service() {
 
 uint8_t __not_in_flash_func(fx_sync_cpu_read)(uint16_t addr) {
     // Note: Keep the SNES-facing service path in SRAM so an XIP cache miss cannot stretch a PIO transaction.
+    // NOTE: Open-bus reads mirror the core's Nintendo-style 0xFF policy instead of MesenCE's 0x00 fallback.
 
     // Preserve the external address for SuperFx::cpu_read(), which owns FX3's
     // mirrored $7000-$7FFF decode. A canonical copy is used only for snapshots.
     const uint16_t external_addr = addr;
     if (g_fx->config().chip == FxChip::FX3 && (addr & 0xF000) == 0x7000) {
-        if ((addr & 0x0300) == 0x0300) return 0;
+        if ((addr & 0x0300) == 0x0300) return 0xFF;
         addr = static_cast<uint16_t>(0x3000 | (addr & 0x03FF));
     } else
         addr &= 0x33FF;
@@ -314,7 +308,7 @@ uint8_t __not_in_flash_func(fx_sync_cpu_read)(uint16_t addr) {
 
     if (!(sfr_low & 0x20)) {
         // Core 1 may have released ownership since the first check above. Retry
-        // once so ordinary stopped-state registers do not unnecessarily read as 0.
+        // once so ordinary stopped-state registers do not unnecessarily appear as open bus.
         fx_sync_lock_state();
 
         if (!g_core1_owns_fx.load(std::memory_order_relaxed)) {
@@ -330,7 +324,7 @@ uint8_t __not_in_flash_func(fx_sync_cpu_read)(uint16_t addr) {
 
     // While core 1 still owns a running (or handoff-pending) state, only the
     // snapshot-safe registers above are exposed to the SNES CPU.
-    return 0;
+    return 0xFF;
 }
 
 bool __not_in_flash_func(fx_sync_cpu_write)(uint16_t addr, uint8_t value) {
@@ -369,12 +363,8 @@ uint8_t __not_in_flash_func(fx_sync_cpu_ram_read)(uint32_t addr) {
 
     fx_sync_unlock_state();
 
-    if (!(g_access_snapshot.load(std::memory_order_acquire) & FX_SYNC_ACCESS_RAM)) {
-        // FIXME: Define the blocked GSU RAM/open-bus return value.
-        // We return 0 to match MesenCE, but MesenCE marks this behavior unresolved.
-        // Verify the hardware response before treating 0 as final.
-        return 0;
-    }
+    if (!(g_access_snapshot.load(std::memory_order_acquire) & FX_SYNC_ACCESS_RAM))
+        return 0xFF;
 
     if (!g_backend.ram_read)
         return 0xFF;

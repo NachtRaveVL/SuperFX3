@@ -10,10 +10,15 @@
 #include <stdint.h>
 #include "fx_state.h"
 
+#ifdef SUPERFX3_TEST
+struct TestSuperFx;
+#endif
+
 struct FxBackend {
     void* context;                                           ///< Opaque context passed to each backend callback.
 
-    uint8_t (*rom_read)(void* context, uint32_t address);    ///< Callback used to read a byte from the ROM backend.
+    uint8_t (*rom_read)(void* context, uint32_t offset);     ///< Reads one byte from the linear GSU/FX ROM backend.
+    uint8_t (*cpu_rom_read)(void* context, uint32_t address); ///< Reads one byte using the SNES CPU-side ROM mapping.
     uint8_t (*ram_read)(void* context, uint32_t address);    ///< Callback used to read a byte from CPU-visible FX SRAM.
 
     void (*ram_write)(void* context, uint32_t address, uint8_t value); ///< Writes CPU-visible FX SRAM.
@@ -21,7 +26,7 @@ struct FxBackend {
 };
 
 class SuperFx {
-   public:
+public:
     // Core control
 
     /// Initializes the SuperFX core with a chip configuration and platform backend.
@@ -64,6 +69,9 @@ class SuperFx {
     /// Returns the open/blocked ROM pattern produced while the GSU owns ROM.
     uint8_t blocked_rom_value(uint32_t addr) const;
 
+    /// Translates a logical GSU ROM address into a linear physical ROM offset.
+    bool gsu_rom_offset(uint32_t address, uint32_t& offset);
+
     // State access
 
     /// Returns whether the GSU is currently executing instructions.
@@ -73,7 +81,11 @@ class SuperFx {
     /// Returns the active chip and timing configuration.
     const FxConfig& config() const { return config_; }
 
-   private:
+private:
+#ifdef SUPERFX3_TEST
+    friend struct TestSuperFx;
+#endif
+
     // Core state
 
     FxConfig config_{};                     ///< Active hardware and timing configuration.
@@ -149,10 +161,14 @@ class SuperFx {
 
     // GSU memory access
 
+    /// Waits for pending ROM activity, maps a GSU address, and reads one byte from ROM.
+    uint8_t read_rom(uint32_t address);
     /// Waits for and returns the buffered GSU ROM-read result.
     uint8_t read_rom_buffer();
-    /// Reads one byte from the currently selected GSU RAM bank.
+    /// Waits for pending RAM activity and reads one byte using RAMB and a 16-bit RAM-relative address.
     uint8_t read_ram(uint16_t address);
+    /// Reads one byte from the $70-$71 program-RAM mapping without applying RAMB.
+    uint8_t read_program_ram(uint32_t address);
 
     /// Queues one byte for the delayed GSU RAM-write pipeline.
     void write_ram(uint16_t address, uint8_t value);

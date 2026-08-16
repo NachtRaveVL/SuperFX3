@@ -2,13 +2,9 @@
 #include <cstdint>
 #include <cstdio>
 
-#define private public
-#include "../fx/fx_core.h"
-#undef private
-
 #include "test_support.h"
 
-static void prepare(SuperFx& fx, TestMemory& memory, const FxConfig& config = fx2_config) {
+static void prepare(TestSuperFx& fx, TestMemory& memory, const FxConfig& config = fx2_config) {
     std::fill(memory.ram.begin(), memory.ram.end(), 0);
     memory.irq = false;
 
@@ -46,7 +42,7 @@ static void prepare(SuperFx& fx, TestMemory& memory, const FxConfig& config = fx
 
 static void test_every_opcode_dispatches() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
 
     // This is deliberately a smoke sweep. The focused tests below assert semantics;
     // this loop makes sure every decoder entry reaches a live handler with sane state.
@@ -58,7 +54,7 @@ static void test_every_opcode_dispatches() {
 
 static void test_control_variants() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
     prepare(fx, memory);
 
     fx.state_.r[0] = 0x8001;
@@ -136,7 +132,7 @@ static void test_control_variants() {
 
 static void test_alu_variants() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
 
     prepare(fx, memory);
     fx.state_.r[0] = 0xFFFF;
@@ -220,7 +216,7 @@ static void test_alu_variants() {
 
 static void test_data_variants() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
 
     prepare(fx, memory);
     fx.state_.program_read_buffer = 0x80;
@@ -331,7 +327,7 @@ static void test_data_variants() {
 
 static void test_graphics_variants() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
     prepare(fx, memory);
 
     fx.state_.color = 0xA0;
@@ -386,7 +382,7 @@ static void test_graphics_variants() {
 
 static void test_memory_and_timing_paths() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
 
     prepare(fx, memory, fx2_config);
     fx.state_.flags.running = true;
@@ -394,7 +390,7 @@ static void test_memory_and_timing_paths() {
     fx.state_.gsu_ram_access = true;
     test_require(!fx.rom_access_allowed() && !fx.ram_access_allowed(),
                  "legacy ownership gates should block CPU while GSU owns ROM/RAM");
-    test_require(fx.cpu_rom_read(0x04) == 0x04 && fx.cpu_ram_read(0x10) == 0,
+    test_require(fx.cpu_rom_read(0x04) == 0x04 && fx.cpu_ram_read(0x10) == 0xFF,
                  "legacy blocked CPU access behavior is wrong");
     memory.ram[0x10] = 0x33;
     fx.cpu_ram_write(0x10, 0x99);
@@ -419,8 +415,31 @@ static void test_memory_and_timing_paths() {
     memory.ram[0x0100] = 0xA5;
     test_require(fx.read_program_byte() == 0xA5, "RAM program-bank fetch is wrong");
 
+    fx.state_.program_bank = 0x71;
+    fx.state_.ram_bank = 0;
+    memory.ram[0x10100] = 0xB6;
+    test_require(fx.read_program_byte() == 0xB6,
+                 "$71 program-bank fetch incorrectly depended on RAMB");
+
     fx.state_.program_bank = 0x72;
-    test_require(fx.read_program_byte() == 0, "unmapped program-bank fetch is wrong");
+    test_require(fx.read_program_byte() == 0xFF, "unmapped program-bank fetch is wrong");
+
+    prepare(fx, memory, fx2_config);
+    fx.state_.program_bank = 0x40;
+    fx.state_.cache_base = 0x8000;
+    fx.state_.r[15] = 0x0100;
+    memory.rom[0x0100] = 0xC4;
+    test_require(fx.read_program_byte() == 0xC4,
+                 "uncached ROM program fetch did not use the GSU ROM mapper");
+
+    prepare(fx, memory, fx2_config);
+    fx.state_.program_bank = 0x71;
+    fx.state_.ram_bank = 0;
+    fx.state_.cache_base = 0;
+    fx.state_.r[15] = 0;
+    memory.ram[0x10000] = 0xD7;
+    test_require(fx.read_program_byte() == 0xD7 && fx.cache_valid_[0],
+                 "$71 program-cache fill incorrectly depended on RAMB");
 
     prepare(fx, memory, fx2_config);
     fx.state_.program_bank = 0;

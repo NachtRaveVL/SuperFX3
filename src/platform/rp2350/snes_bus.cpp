@@ -126,10 +126,8 @@ uint8_t snes_rom_read(void* context, uint32_t address) {
 
     gpio_put(SNES_ROM_OE_N_PIN, SNES_ROM_DISABLE);
 
-    // FIXME: Verify the mapping from logical GSU ROM addresses to the physical parallel-flash pins.
-    // This path drives the 24-bit address directly, so document any required Super FX ROM mirroring
-    // or cartridge-side remap and apply it here if the physical image is not one-to-one.
     gpio_put_masked64(SNES_ADDR_MASK, snes_address_output_value(address));
+
     gpio_set_dir_masked64(SNES_ADDR_MASK, SNES_ADDR_MASK);
     gpio_put(SNES_ROM_OE_N_PIN, SNES_ROM_ENABLE);
 
@@ -152,6 +150,7 @@ void snes_bus_service() {
         // PIO and BUS_OE are already isolated at this point, so waiting for a new cycle to finish can
         // silently miss it. Prove that no SNES cycle can begin during the grant, or add arbitration
         // that captures and services the transaction.
+
         // NOTE: /RESET is still latched while PIO is paused, but software applies it only after
         // the in-flight physical ROM access releases this grant.
         if (g_bus_request.load(std::memory_order_acquire) || !snes_bus_idle()) return;

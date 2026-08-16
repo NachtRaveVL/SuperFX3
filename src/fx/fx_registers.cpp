@@ -9,26 +9,27 @@
 
 // Mesen-derived: SFR low-byte packing follows MesenCE GsuFlags::GetFlagsLow().
 uint8_t __not_in_flash_func(SuperFx::flags_low)() const {
-    return (state_.flags.zero << 1) | (state_.flags.carry << 2) |
-           (state_.flags.sign << 3) | (state_.flags.overflow << 4) |
-           (state_.flags.running << 5) | (state_.flags.rom_read_pending << 6);
+    return static_cast<uint8_t>((state_.flags.zero << 1) | (state_.flags.carry << 2) |
+                                (state_.flags.sign << 3) | (state_.flags.overflow << 4) |
+                                (state_.flags.running << 5) | (state_.flags.rom_read_pending << 6));
 }
 
 // Mesen-derived: SFR high-byte packing follows MesenCE GsuFlags::GetFlagsHigh().
 uint8_t __not_in_flash_func(SuperFx::flags_high)() const {
-    return (state_.flags.alt1 << 0) | (state_.flags.alt2 << 1) |
-           (state_.flags.imm_low << 2) | (state_.flags.imm_high << 3) |
-           (state_.flags.prefix << 4) | (state_.flags.irq << 7);
+    return static_cast<uint8_t>((state_.flags.alt1 << 0) | (state_.flags.alt2 << 1) |
+                                (state_.flags.imm_low << 2) | (state_.flags.imm_high << 3) |
+                                (state_.flags.prefix << 4) | (state_.flags.irq << 7));
 }
 
 // SNES CPU -> GSU register read
 // FX3 relocates the GSU MMIO area to $7000-$7FFF. The $300-byte register/cache
 // block mirrors every $400, while each $x300-$x3FF quarter is open bus. Internally
-// we retain the normal $3000-$32FF addresses so the core logic stays shared.
+// the core retains the normal $3000-$32FF addresses so register handling stays shared.
 // Mesen-derived: closely follows MesenCE Gsu::Read(), with the running-state gate explicit.
+// NOTE: Open-bus reads use Nintendo-style 0xFF instead of MesenCE's 0x00 fallback.
 uint8_t __not_in_flash_func(SuperFx::cpu_read)(uint16_t addr) {
     if (config_.chip == FxChip::FX3 && (addr & 0xF000) == 0x7000) {
-        if ((addr & 0x0300) == 0x0300) return 0;
+        if ((addr & 0x0300) == 0x0300) return 0xFF;
         addr = static_cast<uint16_t>(0x3000 | (addr & 0x03FF));
     } else
         addr &= 0x33FF;
@@ -43,7 +44,7 @@ uint8_t __not_in_flash_func(SuperFx::cpu_read)(uint16_t addr) {
         if (config_.chip == FxChip::FX3 && (addr == 0x301E || addr == 0x301F))
             allowed = true;
 
-        if (!allowed) return 0;
+        if (!allowed) return 0xFF;
     }
 
     // R0-R15
@@ -97,9 +98,8 @@ uint8_t __not_in_flash_func(SuperFx::cpu_read)(uint16_t addr) {
         return cache_[cache_addr];
     }
 
-    // MesenCE currently returns 0 and marks the behavior unresolved.
-    // sd2snes models this as open bus by leaving the data bus undriven.
-    return 0;
+    // Unmapped register/cache addresses are treated as open bus.
+    return 0xFF;
 }
 
 // Mesen-derived: closely follows MesenCE Gsu::Write(), adapted to the relocated FX3 register window.
@@ -124,7 +124,7 @@ void __not_in_flash_func(SuperFx::cpu_write)(uint16_t addr, uint8_t value) {
 
         } else {
             // High byte commits entire register.
-            state_.r[reg] = state_.register_latch | (static_cast<uint16_t>(value) << 8);
+            state_.r[reg] = static_cast<uint16_t>(state_.register_latch | (static_cast<uint16_t>(value) << 8));
 
             // R14 initiates ROM-buffer fetch.
             if (reg == 14) {

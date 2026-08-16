@@ -211,7 +211,7 @@ void SuperFx::op_plot_rpix() {
 // Mesen-derived: closely follows MesenCE Gsu::SWAP().
 void SuperFx::op_swap() {
     const uint16_t src = read_src();
-    const uint16_t value = (src >> 8) | (src << 8);
+    const uint16_t value = static_cast<uint16_t>((src >> 8) | ((src & 0x00FFu) << 8));
 
     write_dst(value);
 

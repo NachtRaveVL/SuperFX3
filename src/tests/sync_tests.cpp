@@ -91,7 +91,7 @@ static void test_direct_stopped_access(TestMemory& memory) {
     test_require(fx_sync_cpu_write(0x7400, 0xA6), "mirrored register low-byte write failed");
     test_require(fx_sync_cpu_write(0x7401, 0x00), "mirrored register high-byte write failed");
     test_require(fx_sync_cpu_read(0x7800) == 0xA6, "synchronized FX3 $400 mirror failed");
-    test_require(fx_sync_cpu_read(0x7B00) == 0, "synchronized FX3 open-bus quarter is wrong");
+    test_require(fx_sync_cpu_read(0x7B00) == 0xFF, "synchronized FX3 open-bus quarter is wrong");
 }
 
 static void test_legacy_ownership_snapshots() {
@@ -114,12 +114,12 @@ static void test_legacy_ownership_snapshots() {
                  "legacy ROM ownership transition was not published to PIO");
 
     memory.ram[0x20] = 0x6A;
-    test_require(fx_sync_cpu_ram_read(0x20) == 0,
-                 "blocked legacy synchronized RAM read did not return the modeled blocked value");
+    test_require(fx_sync_cpu_ram_read(0x20) == 0xFF,
+                 "blocked legacy synchronized RAM read did not return the open-bus value");
     fx_sync_cpu_ram_write(0x20, 0x99);
     test_require(memory.ram[0x20] == 0x6A,
                  "blocked legacy synchronized RAM write reached the backend");
-    test_require(fx_sync_cpu_read(0x3000) == 0,
+    test_require(fx_sync_cpu_read(0x3000) == 0xFF,
                  "running legacy snapshot exposed an ordinary register");
     test_require(fx_sync_cpu_read(0x303B) == 0x04,
                  "legacy synchronized VCR snapshot is wrong");

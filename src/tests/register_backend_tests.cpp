@@ -3,10 +3,6 @@
 #include <cstdint>
 #include <cstdio>
 
-#define private public
-#include "../fx/fx_core.h"
-#undef private
-
 #include "../platform/rp2350/fx_backend.h"
 #include "test_support.h"
 
@@ -18,7 +14,7 @@ static void backend_irq_write(void*, bool asserted) {
 
 static void test_register_reads_and_writes() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
     fx.init(fx2_config, make_test_backend(memory));
 
     // General register latch/commit, including R14 buffered-ROM side effect.
@@ -45,7 +41,7 @@ static void test_register_reads_and_writes() {
     test_require(fx.cpu_read(0x303E) == 0xF0 && fx.cpu_read(0x303F) == 0x01,
                  "CBR read is wrong");
     test_require(fx.cpu_read(0x3100) == 0x9A, "cache-window read is wrong");
-    test_require(fx.cpu_read(0x30AA) == 0, "unmapped register read fallback is wrong");
+    test_require(fx.cpu_read(0x30AA) == 0xFF, "unmapped register read fallback is wrong");
 
     // SFR read packs flags and clears an existing IRQ.
     fx.state_.flags.zero = true;
@@ -79,7 +75,7 @@ static void test_register_reads_and_writes() {
     fx.cpu_write(0x3039, 1);
     test_require(fx.state_.clock_select, "CLSR write is wrong");
 
-    static constexpr uint8_t scmr_values[] = {0x00, 0x01, 0x02, 0x03, 0x3C};
+    static constexpr uint8_t scmr_values[] = {0x00, 0x01, 0x02, 0x03, 0x3C}; ///< SCMR values covering mode and ownership bits.
     for (const uint8_t value : scmr_values)
         fx.cpu_write(0x303A, value);
     test_require(fx.state_.plot_bpp == 2 && fx.state_.screen_height == 3 &&
@@ -111,14 +107,14 @@ static void test_register_reads_and_writes() {
 
 static void test_fx3_running_read_gate() {
     TestMemory memory{};
-    SuperFx fx;
+    TestSuperFx fx;
     fx.init(fx3_config, make_test_backend(memory));
 
     fx.state_.r[15] = 0xBEEF;
     fx.state_.flags.running = true;
     test_require(fx.cpu_read(0x301E) == 0xEF && fx.cpu_read(0x301F) == 0xBE,
                  "FX3 running R15 polling is wrong");
-    test_require(fx.cpu_read(0x3000) == 0, "running FX3 exposed an ordinary register");
+    test_require(fx.cpu_read(0x3000) == 0xFF, "running FX3 exposed an ordinary register");
     test_require(fx.cpu_read(0x303B) == 0x52, "FX3 VCR value is wrong");
 }
 
@@ -136,10 +132,12 @@ static void test_backend_callbacks() {
     };
 
     FxBackend backend = fx_backend_create(&context);
-    test_require(backend.rom_read(backend.context, 0x400000) == 0x11,
-                 "backend ROM callback did not use FX3 logical mapper");
-    test_require(backend.rom_read(backend.context, 0x600000) == 0x22,
-                 "backend ROM callback did not map high FX3 ROM banks");
+    test_require(backend.rom_read(backend.context, 0x000000) == 0x11,
+                 "backend ROM callback did not read a linear FX ROM offset");
+    test_require(backend.rom_read(backend.context, 0x200000) == 0x22,
+                 "backend ROM callback did not read the high linear FX ROM range");
+    test_require(backend.cpu_rom_read == nullptr,
+                 "RP2350 FX backend unexpectedly installed a CPU-side ROM callback");
 
     backend.ram_write(backend.context, 10, 0xA5);
     test_require(backend.ram_read(backend.context, 10) == 0xA5,
@@ -153,8 +151,8 @@ static void test_backend_callbacks() {
     test_require(backend_irq_level, "backend IRQ callback was not forwarded");
 
     context.rom_read = nullptr;
-    test_require(backend.rom_read(backend.context, 0x400000) == 0xFF,
-                 "backend null ROM mapper fallback is wrong");
+    test_require(backend.rom_read(backend.context, 0x000000) == 0xFF,
+                 "backend null ROM callback fallback is wrong");
     context.rom_read = fx3_qspi_rom_read;
 
     context.ram = nullptr;
@@ -167,14 +165,18 @@ static void test_backend_callbacks() {
     backend.set_irq(backend.context, true);
 
     test_require(fx3_qspi_rom_read(nullptr, 0) == 0xFF,
-                 "FX3 ROM mapper null-context fallback is wrong");
+                 "FX3 ROM backend null-context fallback is wrong");
+    test_require(backend.ram_read(nullptr, 0) == 0xFF,
+                 "backend null-context RAM fallback is wrong");
+    backend.ram_write(nullptr, 0, 0x12);
+    backend.set_irq(nullptr, true);
     context.rom = nullptr;
     test_require(fx3_qspi_rom_read(&context, 0) == 0xFF,
-                 "FX3 ROM mapper null-image fallback is wrong");
+                 "FX3 ROM backend null-image fallback is wrong");
     context.rom = rom.data();
     context.rom_size = 1;
-    test_require(fx3_qspi_rom_read(&context, 0x400001) == 0xFF,
-                 "FX3 ROM mapper size check is wrong");
+    test_require(fx3_qspi_rom_read(&context, 1) == 0xFF,
+                 "FX3 ROM backend size check is wrong");
 
     // A host linker address cannot live in the RP2350 XIP window, so host tests can
     // exercise the overlap-rejection branch but not the successful XIP pointer setup.

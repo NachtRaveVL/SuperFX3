@@ -18,15 +18,16 @@ void SuperFx::op_ibt_sms_lms(uint8_t reg) {
     if (state_.flags.alt1) {
         // LMS Load word from RAM using short address.
         // Operand represents WORD address, so left shifted to BYTE address.
-        state_.ram_address = static_cast<uint16_t>(read_operand()) << 1;
+        state_.ram_address = static_cast<uint16_t>(read_operand() * 2u);
 
         const uint8_t lsb = read_ram(state_.ram_address);
         const uint8_t msb = read_ram(state_.ram_address | 0x0001);
 
-        write_reg(reg, static_cast<uint16_t>(lsb) | (static_cast<uint16_t>(msb) << 8));
+        write_reg(reg, static_cast<uint16_t>(
+            static_cast<uint16_t>(lsb) | (static_cast<uint16_t>(msb) << 8)));
     } else if (state_.flags.alt2) {
         // SMS Store word to RAM using WORD address, so left shifted to BYTE address.
-        state_.ram_address = static_cast<uint16_t>(read_operand()) << 1;
+        state_.ram_address = static_cast<uint16_t>(read_operand() * 2u);
         const uint16_t value = state_.r[reg];
 
         write_ram(state_.ram_address, static_cast<uint8_t>(value));
@@ -164,7 +165,8 @@ void SuperFx::op_getb() {
         value = (read_src() & 0xFF00) | rom_data;
     } else if (state_.flags.alt1) {
         // GETBH: Replace HIGH byte of source.
-        value = (read_src() & 0x00FF) | (static_cast<uint16_t>(rom_data) << 8);
+        value = static_cast<uint16_t>(
+            (read_src() & 0x00FFu) | (static_cast<uint32_t>(rom_data) << 8));
     } else // GETB
         value = rom_data;
 
@@ -185,16 +187,19 @@ void SuperFx::op_iwt_lm_sm(uint8_t reg) {
         // LM: Load word from full 16-bit RAM address.
         const uint8_t addr_lo = read_operand();
         const uint8_t addr_hi = read_operand();
-        state_.ram_address = static_cast<uint16_t>(addr_lo) | (static_cast<uint16_t>(addr_hi) << 8);
+        state_.ram_address = static_cast<uint16_t>(
+            static_cast<uint16_t>(addr_lo) | (static_cast<uint16_t>(addr_hi) << 8));
 
         const uint8_t lsb = read_ram(state_.ram_address);
         const uint8_t msb = read_ram(state_.ram_address ^ 0x0001);
-        write_reg(reg, static_cast<uint16_t>(lsb) | (static_cast<uint16_t>(msb) << 8));
+        write_reg(reg, static_cast<uint16_t>(
+            static_cast<uint16_t>(lsb) | (static_cast<uint16_t>(msb) << 8)));
     } else if (state_.flags.alt2) {
         // SM: Store word to full 16-bit RAM address.
         const uint8_t addr_lo = read_operand();
         const uint8_t addr_hi = read_operand();
-        state_.ram_address = static_cast<uint16_t>(addr_lo) | (static_cast<uint16_t>(addr_hi) << 8);
+        state_.ram_address = static_cast<uint16_t>(
+            static_cast<uint16_t>(addr_lo) | (static_cast<uint16_t>(addr_hi) << 8));
 
         const uint16_t value = state_.r[reg];
         write_ram(state_.ram_address, static_cast<uint8_t>(value));
@@ -204,7 +209,8 @@ void SuperFx::op_iwt_lm_sm(uint8_t reg) {
         const uint8_t lsb = read_operand();
         const uint8_t msb = read_operand();
 
-        write_reg(reg, static_cast<uint16_t>(lsb) | (static_cast<uint16_t>(msb) << 8));
+        write_reg(reg, static_cast<uint16_t>(
+            static_cast<uint16_t>(lsb) | (static_cast<uint16_t>(msb) << 8)));
     }
 
     reset_prefix();

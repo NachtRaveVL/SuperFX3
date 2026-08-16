@@ -2,7 +2,7 @@
 #include <cstdint>
 using uint = unsigned int;
 struct dma_channel_config {};
-static constexpr int DMA_SIZE_32 = 2;
+static constexpr int DMA_SIZE_32 = 2; ///< Stub value for 32-bit DMA transfers.
 inline int dma_claim_unused_channel(bool) { return 0; }
 inline dma_channel_config dma_channel_get_default_config(uint) { return {}; }
 inline void channel_config_set_transfer_data_size(dma_channel_config*, int) {}

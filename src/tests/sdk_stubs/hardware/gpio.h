@@ -2,8 +2,8 @@
 #include <cstdint>
 #define NUM_BANK0_GPIOS 48
 using uint = unsigned int;
-static constexpr bool GPIO_IN=false, GPIO_OUT=true;
-static constexpr int GPIO_FUNC_SIO=5;
+static constexpr bool GPIO_IN = false, GPIO_OUT = true; ///< Stub GPIO direction values.
+static constexpr int GPIO_FUNC_SIO = 5; ///< Stub SIO function selector.
 inline void gpio_init(uint) {}
 inline void gpio_disable_pulls(uint) {}
 inline void gpio_set_dir(uint, bool) {}

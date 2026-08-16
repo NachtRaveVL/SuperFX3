@@ -5,7 +5,7 @@
  * it under the terms of the GNU General Public License, version 3 or later.
  *
  * Portions of this software are based on MesenCE's GSU implementation (GPLv3).
- * 
+ *
  * Special thanks to Randy Linden and kandowantu.
  * Dedicated to Rebecca Heinemann and Jennel Jacquays.
  */
@@ -22,10 +22,8 @@
 #include "pico.h"
 #include "pico/stdlib.h"
 
-static constexpr uint32_t FX3_SYS_CLOCK_HZ = 150000000u;
-// SuperFX banks $70-$71 provide 128 KiB of addressable RAM.
-// This fits comfortably inside the RP2350's on-chip SRAM.
-static constexpr uint32_t RAM_SIZE = 128u * 1024u;
+static constexpr uint32_t FX3_SYS_CLOCK_HZ = 150000000u; ///< Required RP2350B system clock for FX3.
+static constexpr uint32_t RAM_SIZE = 128u * 1024u; ///< Shared SRAM backing SuperFX banks $70-$71.
 
 static_assert(std::atomic<uint8_t>::is_always_lock_free,
               "Shared SuperFX RAM requires lock-free byte atomics on RP2350.");
