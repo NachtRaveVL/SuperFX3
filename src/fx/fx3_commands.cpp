@@ -53,9 +53,8 @@ void SuperFx::process_fx3_command() {
 // MERGE
 // GSU1/2: Normal MERGE instruction.
 // FX3: MERGE is repurposed as the FX3 command interface.
-// FIXME: Confirm how FX3 MERGE should affect the condition flags.
-// MesenCE leaves them unchanged while the current Snes9x FX3 implementation clears them.
-// We follow MesenCE for now; verify the hardware behavior before locking this down.
+// MesenCE and Randy's feedback say to not change status flags. Snes9x's
+// FX3 implementation clears them.
 void SuperFx::op_merge() {
     if (config_.chip == FxChip::FX3) {
         process_fx3_command();

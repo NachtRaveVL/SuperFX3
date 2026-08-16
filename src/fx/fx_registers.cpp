@@ -30,9 +30,8 @@ uint8_t __not_in_flash_func(SuperFx::cpu_read)(uint16_t addr) {
     if (config_.chip == FxChip::FX3 && (addr & 0xF000) == 0x7000) {
         if ((addr & 0x0300) == 0x0300) return 0;
         addr = static_cast<uint16_t>(0x3000 | (addr & 0x03FF));
-    } else {
+    } else
         addr &= 0x33FF;
-    }
 
     // While executing, only SFR/VCR are readable.
     // FX3 additionally allows R15 polling.
@@ -68,7 +67,6 @@ uint8_t __not_in_flash_func(SuperFx::cpu_read)(uint16_t addr) {
             const uint8_t result = flags_high();
 
             state_.flags.irq = false;
-
             if (backend_.set_irq) backend_.set_irq(backend_.context, false);
 
             return result;
@@ -99,9 +97,8 @@ uint8_t __not_in_flash_func(SuperFx::cpu_read)(uint16_t addr) {
         return cache_[cache_addr];
     }
 
-    // FIXME: Define the open-bus and mirroring behavior for unmapped GSU register reads.
-    // We return 0 to match MesenCE, but MesenCE explicitly marks this behavior unresolved.
-    // Verify the real hardware response before locking this value down.
+    // MesenCE currently returns 0 and marks the behavior unresolved.
+    // sd2snes models this as open bus by leaving the data bus undriven.
     return 0;
 }
 
