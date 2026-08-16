@@ -26,8 +26,7 @@ uint16_t SuperFx::get_tile_index(uint8_t x, uint8_t y) {
         case 2:
             return static_cast<uint16_t>(((x & 0xF8) << 1) + (x & 0xF8) + ((y & 0xF8) >> 3));
         case 3:
-            return static_cast<uint16_t>(((y & 0x80) << 2) + ((x & 0x80) << 1) +
-                                         ((y & 0x78) << 1) + ((x & 0x78) >> 3));
+            return static_cast<uint16_t>(((y & 0x80) << 2) + ((x & 0x80) << 1) + ((y & 0x78) << 1) + ((x & 0x78) >> 3));
     }
 }
 
@@ -78,9 +77,9 @@ bool SuperFx::is_transparent_pixel() const {
 }
 
 // Mesen-derived: closely follows the original GSU PLOT/pixel-cache path.
-// FX3 hardware uses an internal chunky framebuffer, but the working sd2snes FX3
-// implementation by terminator2k2 retains this cache and lets SCMR mode 3 flush
-// all eight bitplanes directly. MERGE C2P commands can therefore be no-ops here.
+// Original FX3 hardware used an internal chunky framebuffer, but the sd2snes
+// FX3 implementation by terminator2k2 retains this cache and lets SCMR mode 3
+// flush all eight bitplanes directly. MERGE C2P commands are therefore no-ops.
 void SuperFx::draw_pixel(uint8_t x, uint8_t y) {
     if (!state_.plot_transparent && is_transparent_pixel()) return;
 
