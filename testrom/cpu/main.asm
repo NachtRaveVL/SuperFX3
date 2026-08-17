@@ -11,6 +11,7 @@
 .include "vars.asm"
 .include "text.asm"
 .include "ppu.asm"
+.include "background.asm"
 .include "input.asm"
 .include "runner.asm"
 .include "ui.asm"
@@ -64,6 +65,14 @@ PlotExpectedTile:
 PlotExpectedPattern:
     .incbin "generated/plot_pattern8bpp.bin"
 PlotExpectedPatternEnd:
+
+; Tile 1 on BG1 is reserved as an always-transparent 8bpp tile. The BG1 map
+; points here everywhere except the single visual-result slot.
+Blank8bppTile:
+.repeat 64
+    .byte $00
+.endrepeat
+Blank8bppTileEnd:
 
 .segment "FONT"
 Font4bpp:

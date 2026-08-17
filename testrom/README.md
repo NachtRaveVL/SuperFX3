@@ -57,8 +57,6 @@ The source generators, registry checks, firmware ABI drift checks, QSPI staging 
 
 The complete host/static firmware suite passes with this first-pass diagnostic framework in the tree, including the architectural core tests, stateful SNES bus simulation, single- and dual-ROM configurations, synchronization tests, and strict production stub links.
 
-The current development container does not have `ca65` or `ld65` installed and cannot install cc65 from its package sources, so the final native assembly/link step could not be executed here. The build scripts therefore do not claim that a hardware-ready `.sfc` or GSU binary has already been produced in this environment. On a workstation with cc65 installed, `python3 testrom/build.py` is the intended end-to-end build command and will emit the matched binary set described above.
-
 ## Programming Images
 
 To also stripe the `.sfc` for the physical parallel ROM:
@@ -79,7 +77,7 @@ That uses the same QSPI image packer as the rest of the project.
 
 `tests.json` is the test registry. Each entry names a GSU kernel, setup operation, validator, timeout, and optional parameters. The menu and `RUN ALL` path use the same registry.
 
-The first pass contains these test families:
+Current test families include:
 
 * FX3 presence and CPU-visible register access
 * GSU STOP and repeated START/STOP
@@ -93,13 +91,7 @@ The first pass contains these test families:
 * FX3 CLEAR A, B, and C with full tile-pattern checks and neighbor guards
 * FX3 C2P A, B, and C no-op checks for the current direct-to-planar firmware architecture
 
-Visual tests also copy an actual 8bpp tile from bank `$71` into SNES VRAM. The screen is therefore useful to a human, but the screen is not the oracle. The 65816 checks the shared RAM bytes first.
-
-## Shared Test ABI
-
-The first few bytes around `$70:0200` are reserved as a tiny result area for the diagnostic kernels. Graphics tests use the real FX3 planar framebuffer in bank `$71`.
-
-The test ROM intentionally fills guard areas with known sentinel values before several tests. A result does not pass merely because the expected byte changed. It also checks that neighboring memory stayed untouched where that matters.
+Visual tests also copy an actual 8bpp tile from bank `$71` into SNES VRAM. The BG1 map is blank everywhere except for one visual-result tile, so test data cannot repeat across the whole screen. TIMEOUT results keep BG1 hidden because the output buffer may still contain setup sentinels rather than a meaningful result. The screen is therefore useful to a human, but the screen is not the oracle. The 65816 checks the shared RAM bytes first.
 
 ## Source Tree
 
@@ -122,14 +114,10 @@ UltraStarFox and UltraStarFox2 are useful references for how real Star Fox codeb
 * https://github.com/Sunlitspace542/ultrastarfox
 * https://github.com/Sunlitspace542/ultrastarfox2
 
-Rebecca Heineman's Burgerlib is MIT licensed and its history goes back to 65816 code on the SNES and Apple IIgs. The currently published Burgerlib tree is not a drop-in archive of those old SNES routines, so the first pass does not pretend we imported code that is not there. The supervisor is intentionally split into small text, input, PPU, and memory primitives so worthwhile Burgerlib-era algorithms can be ported or replaced later with clear provenance and tests.
+Rebecca Heineman's Burgerlib is MIT licensed and its history goes back to 65816 code on the SNES and Apple IIgs. It contains highly optimized 65816 code amongst other useful functionality.
 
 * https://github.com/Olde-Skuul/burgerlib
 
 ARM9's `casfx` is the other useful reference for readable SuperFX source on ca65. The local macro layer is intentionally much smaller, but its instruction encodings and same-register `WITH` optimizations were cross-checked against it.
 
 * https://github.com/ARM9/casfx
-
-## Current Scope
-
-This first ROM targets the NR-RetroWorks FX3 hardware and its relocated `$7000-$7FFF` register interface. It is not yet a generic emulator conformance ROM. In particular, the three C2P command tests verify the current direct-to-planar firmware policy where those MERGE commands are no-ops. A separate compatibility profile can be added later if we want the same supervisor to compare original FX3 behavior, emulator behavior, and this hardware implementation side by side.

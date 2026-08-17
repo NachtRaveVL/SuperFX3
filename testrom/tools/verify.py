@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 
+from gen_background import VISIBLE_SCANLINES, build_all_tables
 from gen_font import GLYPHS, build_font
 from gen_palette import PALETTE_BYTES, build_palette, diagnostic_color
 from gen_plot_pattern import TILE_BYTES, build_pattern, pixel_value
@@ -70,6 +71,42 @@ def main() -> int:
         raise SystemExit(f"font is missing UI characters: {unsupported}")
     if len(build_font()) != 96 * 32:
         raise SystemExit("font generator must emit exactly 96 SNES 4bpp tiles")
+
+    background_tables = build_all_tables()
+    if len(background_tables) != 12:
+        raise SystemExit("background generator must emit four RGB themes")
+    expected_table_bytes = VISIBLE_SCANLINES * 2 + 1
+    for name, table in background_tables.items():
+        if len(table) != expected_table_bytes or table[-1] != 0:
+            raise SystemExit(f"background HDMA table {name} has an invalid size/terminator")
+        if any(table[offset] != 1 for offset in range(0, VISIBLE_SCANLINES * 2, 2)):
+            raise SystemExit(f"background HDMA table {name} must update every visible scanline")
+
+    background_source = (testrom / "cpu/background.asm").read_text()
+    require_source(r"lda\s+#\$20\s*;[^\n]*backdrop", background_source,
+                   "background effect must apply color math to the backdrop only")
+    require_source(r"lda\s+#\$E0.*?sta\s+HDMAEN", background_source,
+                   "background effect must enable only HDMA channels 5-7")
+    require_source(r"sta\s+A1T5L.*?stx\s+A1T6L.*?sty\s+A1T7L", background_source,
+                   "background themes must switch HDMA source tables without touching the UI palettes")
+
+    ui_source = (testrom / "cpu/ui.asm").read_text()
+    for routine in ("BackgroundSetNormal", "BackgroundSetForResult", "BackgroundSetForSummary"):
+        if f"jsr {routine}" not in ui_source:
+            raise SystemExit(f"UI no longer selects background theme through {routine}")
+    require_source(r"UpdateResultVisual:.*?cmp\s+#TEST_RESULT_TIMEOUT.*?PpuHideVisual", ui_source,
+                   "timeout results must not display uninitialized/sentinel BG1 test data")
+
+    startup_source = (testrom / "cpu/startup.asm").read_text()
+    require_source(r"sta\s+current_test.*?jsr\s+RenderRunning.*?jsr\s+WaitFrame.*?jsr\s+PpuUploadTextMap.*?jsr\s+RunCurrentTest",
+                   startup_source,
+                   "selected tests must draw the RUNNING screen before executing/waiting")
+
+    ppu_source = (testrom / "cpu/ppu.asm").read_text()
+    require_source(r"PpuClearBg1Map:.*?lda\s+#BG1_BLANK_TILE.*?BG1_VISUAL_MAP_OFFSET", ppu_source,
+                   "BG1 visual map must be blank except for the single result tile")
+    require_source(r"PpuUploadBlankBg1Tile:", ppu_source,
+                   "BG1 visual path must upload a guaranteed blank tile")
 
     palette = build_palette()
     if len(palette) != PALETTE_BYTES:

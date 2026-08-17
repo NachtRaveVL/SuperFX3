@@ -27,6 +27,7 @@ MenuNext:
     rts
 
 RenderMenu:
+    jsr BackgroundSetNormal
     jsr TextClearMap
     TEXT_AT 1, 1, StrTitle
     TEXT_AT 1, 3, StrMenuHelpA
@@ -75,6 +76,7 @@ RenderMenu:
     rts
 
 RenderRunning:
+    jsr BackgroundSetNormal
     jsr PpuHideVisual
     jsr TextClearMap
     TEXT_AT 1, 1, StrTitle
@@ -92,6 +94,7 @@ RenderRunning:
     rts
 
 RenderResult:
+    jsr BackgroundSetForResult
     jsr TextClearMap
     TEXT_AT 1, 1, StrTitle
     lda #((4 * 32 + 1) * 2)
@@ -136,21 +139,29 @@ RenderResult:
     TEXT_AT 1, 23, StrBBack
     rts
 
-ResultScreen:
+UpdateResultVisual:
+    rep #$20
+    .a16
+    lda test_result
+    cmp #TEST_RESULT_TIMEOUT
+    beq @hide
+
     sep #$20
     .a8
     lda current_flags
     and #TEST_FLAG_VISUAL
-    beq @no_visual
+    beq @hide8
     rep #$20
     .a16
-    jsr PpuShowCurrentVisual
-    bra @render
-@no_visual:
+    jmp PpuShowCurrentVisual
+@hide8:
     rep #$20
     .a16
-    jsr PpuHideVisual
-@render:
+@hide:
+    jmp PpuHideVisual
+
+ResultScreen:
+    jsr UpdateResultVisual
     jsr RenderResult
 @loop:
     jsr WaitFrame
@@ -166,20 +177,7 @@ ResultScreen:
     jsr WaitFrame
     jsr PpuUploadTextMap
     jsr RunCurrentTest
-    sep #$20
-    .a8
-    lda current_flags
-    and #TEST_FLAG_VISUAL
-    beq @rerun_no_visual
-    rep #$20
-    .a16
-    jsr PpuShowCurrentVisual
-    bra @rerender
-@rerun_no_visual:
-    rep #$20
-    .a16
-    jsr PpuHideVisual
-@rerender:
+    jsr UpdateResultVisual
     jsr RenderResult
     bra @loop
 @done:
@@ -227,6 +225,7 @@ RunAllTests:
     rts
 
 RenderSummary:
+    jsr BackgroundSetForSummary
     jsr PpuHideVisual
     jsr TextClearMap
     TEXT_AT 1, 1, StrTitle

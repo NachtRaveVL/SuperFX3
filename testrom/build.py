@@ -79,6 +79,7 @@ def generate_sources(build_dir: Path) -> None:
     run([sys.executable, str(TOOLS / "verify.py"), "--root", str(REPO)])
     run([sys.executable, str(TOOLS / "gen_font.py"), str(ROOT / "generated/font4bpp.bin")])
     run([sys.executable, str(TOOLS / "gen_palette.py"), str(ROOT / "generated/palette.bin")])
+    run([sys.executable, str(TOOLS / "gen_background.py"), str(ROOT / "generated/background.inc")])
     run([sys.executable, str(TOOLS / "gen_plot_pattern.py"), str(ROOT / "generated/plot_pattern8bpp.bin")])
     run([sys.executable, str(TOOLS / "gen_registry.py"), str(ROOT / "tests.json"), str(ROOT / "generated/test_registry.inc")])
     build_dir.mkdir(parents=True, exist_ok=True)

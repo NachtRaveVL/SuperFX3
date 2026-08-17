@@ -34,7 +34,7 @@
     "setup": "NONE",
     "validator": "COMPLETE",
     "flags": [],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 0,
     "param1": 0,
     "expected": 0
@@ -48,7 +48,7 @@
     "flags": [
       "REPEAT"
     ],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 32,
     "param1": 0,
     "expected": 0
@@ -60,7 +60,7 @@
     "setup": "RAM_MAGIC",
     "validator": "RAM_MAGIC",
     "flags": [],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 0,
     "param1": 0,
     "expected": 42330
@@ -72,7 +72,7 @@
     "setup": "RAM_MAGIC",
     "validator": "ALU",
     "flags": [],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 0,
     "param1": 0,
     "expected": 4677
@@ -84,7 +84,7 @@
     "setup": "RAM_MAGIC",
     "validator": "ROM",
     "flags": [],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 0,
     "param1": 0,
     "expected": 199
@@ -96,7 +96,7 @@
     "setup": "RAM_MAGIC",
     "validator": "PIPELINE",
     "flags": [],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 0,
     "param1": 0,
     "expected": 216
@@ -110,7 +110,7 @@
     "flags": [
       "VISUAL"
     ],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 0,
     "param1": 0,
     "expected": 90
@@ -124,7 +124,7 @@
     "flags": [
       "VISUAL"
     ],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 0,
     "param1": 0,
     "expected": 0
@@ -138,7 +138,7 @@
     "flags": [
       "VISUAL"
     ],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 0,
     "param1": 0,
     "expected": 90
@@ -152,7 +152,7 @@
     "flags": [
       "VISUAL"
     ],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 0,
     "param1": 8,
     "expected": 0
@@ -166,7 +166,7 @@
     "flags": [
       "VISUAL"
     ],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 9,
     "param1": 17,
     "expected": 0
@@ -180,7 +180,7 @@
     "flags": [
       "VISUAL"
     ],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 18,
     "param1": 26,
     "expected": 0
@@ -192,7 +192,7 @@
     "setup": "C2P_NOOP",
     "validator": "C2P_NOOP",
     "flags": [],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 0,
     "param1": 0,
     "expected": 0
@@ -204,7 +204,7 @@
     "setup": "C2P_NOOP",
     "validator": "C2P_NOOP",
     "flags": [],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 0,
     "param1": 0,
     "expected": 0
@@ -216,7 +216,7 @@
     "setup": "C2P_NOOP",
     "validator": "C2P_NOOP",
     "flags": [],
-    "timeout": 120,
+    "timeout": 30,
     "param0": 0,
     "param1": 0,
     "expected": 0

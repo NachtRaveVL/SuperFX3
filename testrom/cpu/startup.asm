@@ -47,6 +47,9 @@ MainLoop:
     beq :+
     lda menu_index
     sta current_test
+    jsr RenderRunning
+    jsr WaitFrame
+    jsr PpuUploadTextMap
     jsr RunCurrentTest
     jsr ResultScreen
     jsr PpuHideVisual
