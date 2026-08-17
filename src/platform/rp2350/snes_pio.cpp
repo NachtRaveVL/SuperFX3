@@ -25,7 +25,6 @@
 #error "This firmware requires PICO_BOARD=snes_fx3"
 #endif
 
-static constexpr uint32_t READ_RESPONSE_DRIVE = 1u; ///< Read-response flag requesting data-bus drive.
 static constexpr uint32_t READ_RESPONSE_PINDIRS = 0xFFu << 9; ///< PIO pindirs mask for D0-D7.
 
 static_assert(NUM_BANK0_GPIOS >= 48, "SuperFX3 requires the 48-GPIO RP2350B package.");
@@ -89,7 +88,7 @@ static inline bool snes_is_gsu_register(const SuperFx& fx, uint32_t address) {
 
     if (fx.config().chip == FxChip::FX3) {
         // FX3 mirrors the $7000-$72FF block every $400 through $7FFF.
-        // The $x300-$x3FF quarter is open bus and must not be driven.
+        // The $x300-$x3FF quarter uses the project open-bus value of 0xFF.
         return addr >= 0x7000 && addr <= 0x7FFF && (addr & 0x0300) != 0x0300;
     }
 
@@ -121,21 +120,21 @@ static inline bool snes_gsu_ram_offset(const SuperFx& fx, uint32_t address, uint
     return false;
 }
 
-// Packs a PIO read response with data and the drive/release direction masks.
+// Packs a driven PIO read response with data and the drive/release direction masks.
 static inline uint32_t snes_read_response(uint8_t data) {
-    return READ_RESPONSE_DRIVE | (static_cast<uint32_t>(data) << 1) | READ_RESPONSE_PINDIRS;
+    return (static_cast<uint32_t>(data) << 1) | READ_RESPONSE_PINDIRS;
 }
 
 // PIO interrupt handlers
 
-// Answers PIO read requests that cannot be handled by direct ROM pass-through.
+// Answers PIO read requests that cannot be handled by the direct parallel-ROM path.
 static void __not_in_flash_func(snes_read_irq_handler)() {
     if (!pio_interrupt_get(pio2, 0))
         return;
 
     pio_interrupt_clear(pio2, 0);
 
-    uint32_t response = 0;
+    uint32_t response = snes_read_response(0xFF);
 
     if (g_fx) {
         // FIXME: Latch the SNES address at /RD, or prove the live sample has enough hold time.
@@ -158,10 +157,6 @@ static void __not_in_flash_func(snes_read_irq_handler)() {
             response = snes_read_response(fx_sync_blocked_rom_value(address));
         }
 
-        // NOTE: FX3 $72-$7D /ROMSEL cycles intentionally fall through with response=0.
-        // FX3.PDF maps ROM only through $6F and SRAM only at $70-$71, so these
-        // cartridge-space reads must not expose the parallel 65816 ROM. Exact
-        // open-bus value is system-side behavior; response=0 means do not drive.
     }
 
     pio_sm_put(pio2, g_read_sm, response);
@@ -234,7 +229,7 @@ static void snes_start_write_addr_dma() {
     );
 }
 
-// Returns the GPIO mask for DATA_DIR, /BUS_OE, and /ROM_OE.
+// Returns the GPIO mask for DATA_DIR, /BUS_OE, and both ROM enables.
 static uint64_t snes_control_mask() {
     return SNES_BUS_CTRL_MASK;
 }
@@ -243,26 +238,27 @@ static uint64_t snes_control_mask() {
 static uint64_t snes_idle_control_values() {
     return (static_cast<uint64_t>(SNES_DATA_DIR_IN) << SNES_DATA_DIR_PIN) |
            (static_cast<uint64_t>(SNES_BUS_ENABLE) << SNES_BUS_OE_N_PIN) |
-           (static_cast<uint64_t>(SNES_ROM_DISABLE) << SNES_ROM_OE_N_PIN);
+           (static_cast<uint64_t>(SNES_ROM_DISABLE) << SNES_ROM0_OE_N_PIN) |
+           (static_cast<uint64_t>(SNES_ROM_DISABLE) << SNES_ROM1_OE_N_PIN);
 }
 
 // Returns the safe control-pin values used while PIO is disconnected from the bus.
 static uint64_t snes_isolated_control_values() {
     return (static_cast<uint64_t>(SNES_DATA_DIR_IN) << SNES_DATA_DIR_PIN) |
            (static_cast<uint64_t>(SNES_BUS_DISABLE) << SNES_BUS_OE_N_PIN) |
-           (static_cast<uint64_t>(SNES_ROM_DISABLE) << SNES_ROM_OE_N_PIN);
+           (static_cast<uint64_t>(SNES_ROM_DISABLE) << SNES_ROM0_OE_N_PIN) |
+           (static_cast<uint64_t>(SNES_ROM_DISABLE) << SNES_ROM1_OE_N_PIN);
 }
 
 // Updates the read-state-machine scratch value used for ROM ownership/decode.
 // The caller must ensure the read SM is stopped or otherwise idle before changing X.
 static void snes_set_read_mode_x(bool blocked) {
     if (g_fx->config().chip == FxChip::FX3) {
-        // FX3 read PIO compares X against A20-A23 to recognize the low $7x
-        // group before enabling the parallel ROM. The CPU handler then maps
-        // $70/$71 as SRAM and leaves the rest of that low group undriven.
+        // FX3 read PIO compares X against A17-A23 so only $70/$71 are
+        // removed from the direct parallel-ROM path for shared SRAM.
         pio_sm_exec(
             pio2, g_read_sm,
-            pio_encode_set(pio_x, 7)
+            pio_encode_set(pio_x, 56)
         );
         g_rom_blocked_pio = false;
         return;
@@ -368,15 +364,18 @@ void snes_pio_pause() {
 
     gpio_put(SNES_DATA_DIR_PIN, SNES_DATA_DIR_IN);
     gpio_put(SNES_BUS_OE_N_PIN, SNES_BUS_DISABLE);
-    gpio_put(SNES_ROM_OE_N_PIN, SNES_ROM_DISABLE);
+    gpio_put(SNES_ROM0_OE_N_PIN, SNES_ROM_DISABLE);
+    gpio_put(SNES_ROM1_OE_N_PIN, SNES_ROM_DISABLE);
 
     gpio_set_dir(SNES_DATA_DIR_PIN, GPIO_OUT);
     gpio_set_dir(SNES_BUS_OE_N_PIN, GPIO_OUT);
-    gpio_set_dir(SNES_ROM_OE_N_PIN, GPIO_OUT);
+    gpio_set_dir(SNES_ROM0_OE_N_PIN, GPIO_OUT);
+    gpio_set_dir(SNES_ROM1_OE_N_PIN, GPIO_OUT);
 
     gpio_set_function(SNES_DATA_DIR_PIN, GPIO_FUNC_SIO);
     gpio_set_function(SNES_BUS_OE_N_PIN, GPIO_FUNC_SIO);
-    gpio_set_function(SNES_ROM_OE_N_PIN, GPIO_FUNC_SIO);
+    gpio_set_function(SNES_ROM0_OE_N_PIN, GPIO_FUNC_SIO);
+    gpio_set_function(SNES_ROM1_OE_N_PIN, GPIO_FUNC_SIO);
 
     critical_section_exit(&g_read_x_gate);
 }
@@ -417,7 +416,8 @@ void snes_pio_resume() {
 
     pio_gpio_init(pio2, SNES_DATA_DIR_PIN);
     pio_gpio_init(pio2, SNES_BUS_OE_N_PIN);
-    pio_gpio_init(pio2, SNES_ROM_OE_N_PIN);
+    pio_gpio_init(pio2, SNES_ROM0_OE_N_PIN);
+    pio_gpio_init(pio2, SNES_ROM1_OE_N_PIN);
 
     pio_sm_set_pins_with_mask64(
         pio2, g_read_sm,
@@ -465,8 +465,13 @@ void snes_pio_start(SuperFx& fx) {
         g_write_offset = snes_add_program(pio1, &snes_write_fx3_program);
         g_write_config = snes_write_fx3_program_get_default_config(g_write_offset);
 
+#if SNES_PARALLEL_ROM_COUNT == 2
+        g_read_offset = snes_add_program(pio2, &snes_read_fx3_dual_program);
+        g_read_config = snes_read_fx3_dual_program_get_default_config(g_read_offset);
+#else
         g_read_offset = snes_add_program(pio2, &snes_read_fx3_program);
         g_read_config = snes_read_fx3_program_get_default_config(g_read_offset);
+#endif
     } else {
         g_select_offset = snes_add_program(pio0, &snes_select_gsu_program);
         select_config = snes_select_gsu_program_get_default_config(g_select_offset);
@@ -474,8 +479,13 @@ void snes_pio_start(SuperFx& fx) {
         g_write_offset = snes_add_program(pio1, &snes_write_gsu_program);
         g_write_config = snes_write_gsu_program_get_default_config(g_write_offset);
 
+#if SNES_PARALLEL_ROM_COUNT == 2
+        g_read_offset = snes_add_program(pio2, &snes_read_gsu_dual_program);
+        g_read_config = snes_read_gsu_dual_program_get_default_config(g_read_offset);
+#else
         g_read_offset = snes_add_program(pio2, &snes_read_gsu_program);
         g_read_config = snes_read_gsu_program_get_default_config(g_read_offset);
+#endif
     }
 
     g_reset_offset = snes_add_program(pio1, &snes_reset_program);
@@ -496,6 +506,7 @@ void snes_pio_start(SuperFx& fx) {
 
     sm_config_set_in_pins(&g_read_config, SNES_ROMSEL_N_PIN);
     sm_config_set_out_pins(&g_read_config, SNES_DATA_BASE, SNES_DATA_COUNT);
+    sm_config_set_set_pins(&g_read_config, SNES_ROM1_OE_N_PIN, 1);
     sm_config_set_sideset_pins(&g_read_config, SNES_PIO_SIDESET_BASE);
     sm_config_set_jmp_pin(&g_read_config, SNES_SERVICE_SEL_PIN);
     sm_config_set_in_shift(&g_read_config, false, false, 32);

@@ -26,8 +26,11 @@ The firmware is now building cleanly with the real RP2350 toolchain and the comp
   * 3 MiB reserved for GSU/FX program code and data
   * 1 MiB reserved for firmware (padded with `0xFF`)
 * Separate 1–16 MiB (8–128 Mbit) external parallel flash ROM for the SNES CPU
+* External parallel flash ROM for the SNES CPU, with one device by default and an optional second
+  * Supports 1-64 Mbit devices, up to 128 Mbit total with two 64 Mbit ROMs
+  * Supports LoROM, HiROM, ExLoROM, ExHiROM, extended SuperFX, and raw bus images
 * FX3 8bpp PLOT and pixel-cache graphics path with dithering and native SNES planar output
-* FX3 direct-to-planar draw, read, and clear commands (no chunky source conversion)
+* FX3 direct-to-planar draw, read, and clear commands, skipping all chunky conversion
 * SuperFX register access, IRQ, RESET, STOP/GO, and cross-core synchronization
 * Fully tested codebase with code coverage reporting
   * Host-side C++ tests for the processor core, opcodes, registers, synchronization, and backend
@@ -47,11 +50,9 @@ The RP2350B is split into two main jobs.
 
 PIO handles the timing-sensitive cartridge bus work. One PIO block decodes the SuperFX service area, another captures SNES writes, and another services reads and bus-control changes.
 
-The SuperFX banks `$70-$71` are backed by 128 KiB of RP2350 internal SRAM, with the FX framebuffer living at the start of the later. The FX3 processor's private 3 MiB ROM image lives in a reserved partition at the top of the RP2350's primary QSPI flash.
+The SuperFX banks `$70-$71` are backed by 128 KiB of RP2350 internal SRAM, with the FX framebuffer living at the start of the second bank. The FX3 processor's private 3 MiB ROM image lives in a reserved partition at the top of the RP2350's primary QSPI flash.
 
-The QSPI GSU/FX ROM is not the main SNES game ROM. The cartridge's normal parallel ROM remains available to the SNES 65816 side while the GSU/FX processor accesses its own GSU/FX ROM image.
-
-The 65816 parallel-ROM path is currently pass-through: firmware gates `/ROM_OE` but does not remap CPU ROM addresses, so the PCB wiring or programmed image must already implement the intended SNES ROM map. This is slowly changing as we evolve the firmware.
+The QSPI FX3 ROM is not the main SNES game ROM. The cartridge's normal parallel ROM remains available to the SNES 65816 side while the FX3 processor accesses its own ROM image. The parallel-ROM path is straight pass-through: the SNES address lines drive the ROM address pins directly, and an optional second device uses A23 as the upper-chip select. ROMs are striped into the physical device image before programming so CPU reads never need a live address remap.
 
 ---
 
@@ -83,15 +84,15 @@ REFRESH | GPIO22
 `/IRQ` | GPIO24
 `/PARD` | GPIO25
 `/PAWR` | GPIO26
-EXPAND | GPIO27
+Internal SuperFX service select | GPIO27
 DATA_DIR | GPIO28
 `/BUS_OE` | GPIO29
-`/ROM_OE` | GPIO30
-Internal SuperFX service select | GPIO31
+`/ROM0_OE` | GPIO30
+`/ROM1_OE` (optional) | GPIO31
 A16-A23 | GPIO32-GPIO39
 D0-D7 | GPIO40-GPIO47
 
-GPIO31 is internal to the cartridge firmware and is not connected to the SNES cartridge edge. PIO0 generates this signal from the address decode and the other PIO bus handlers use it to identify SuperFX register transactions.
+GPIO27 is internal to the cartridge firmware and is not connected to the SNES cartridge edge. PIO0 generates this signal from the address decode and the other PIO bus handlers use it to identify SuperFX register transactions.
 
 ---
 
@@ -102,7 +103,7 @@ GPIO31 is internal to the cartridge firmware and is not connected to the SNES ca
 * Raspberry Pi Pico SDK 2.3.0 or newer
 * ARM GCC toolchain with `arm-none-eabi-gcc`/`arm-none-eabi-g++`
 * CMake
-* Python 3 for the QSPI image packing tool
+* Python 3 for the ROM image packing tools
 
 Set `PICO_SDK_PATH` to your Pico SDK installation if it is not already configured:
 
@@ -120,6 +121,29 @@ cmake --build build -j"$(nproc)"
 The project uses C++17 and automatically selects the custom `snes_fx3` RP2350B board definition.
 
 Normal Pico SDK output files are generated under `build/`, including `superfx3.elf` and the additional flashable image formats.
+
+---
+
+# SNES Parallel ROM Image
+
+The SNES CPU uses one parallel ROM by default with an optional second device for larger bus images. A 64 Mbit device uses A0-A22 directly, while smaller devices use the subset of address pins they implement. In dual-ROM builds, A23 selects ROM0 or ROM1. The source ROM is striped into the physical flash layout ahead of time instead of changing address lines during each CPU read. This keeps the normal ROM path entirely in PIO and external flash timing.
+
+Create a programming image from a raw SNES ROM with:
+
+```bash
+python3 src/tools/make_snes_rom_image.py \
+    path/to/game.sfc \
+    build/game_rom0.bin \
+    --map lorom \
+    --chip-size-mbit 64 \
+    --rom-count 1
+```
+
+Each populated ROM may be 1, 2, 4, 8, 16, 32, or 64 Mbit. One ROM is the default. A second ROM is only required when the striped image needs the A23=1 half of the bus or cannot fit the selected single-device capacity. The tool reports the minimum device size that can hold the selected mapping.
+
+Supported map names are `lorom`, `hirom`, `exlorom`, `exhirom`, `superfx-extended`, and `raw`. LoROM and HiROM accept source images up to 4 MiB, ExLoROM and ExHiROM up to 8 MiB, and `superfx-extended` models the 11 MiB Snes9x extended SuperFX CPU map. `raw` accepts a prebuilt bus image up to the full 16 MiB / 128 Mbit physical ceiling. A 512-byte copier header is stripped automatically for mapped SNES ROMs.
+
+The output file matches the selected physical ROM capacity and unused locations are filled with `0xFF`. With `--rom-count 2`, ROM1 is written separately using the `--rom1-output` path or an automatically generated `.rom1` filename. Banks `$70-$71` are still intercepted by the cartridge firmware for the shared 128 KiB SRAM.
 
 ---
 
@@ -161,7 +185,7 @@ bash tests/run_tests.sh
 
 Calling the script through `bash` avoids executable-bit issues when the tree is unpacked on Windows/WSL.
 
-This runs the C++ processor tests, opcode tests, synchronization tests, register/backend tests, graphics packer tests, PIO static tests, and a strict production-source compile/link check using Pico SDK stubs.
+This runs the C++ processor tests, opcode tests, synchronization tests, register/backend tests, ROM image packer tests, PIO static tests, and a strict production-source compile/link check using Pico SDK stubs.
 
 For coverage:
 
@@ -193,7 +217,7 @@ Path | Description
 `src/fx/` | SuperFX processor core, opcodes, registers, memory, and graphics
 `src/platform/rp2350/` | RP2350 backend, cross-core synchronization, SNES bus, PIO, and DMA support
 `src/tests/` | Host C++ tests, PIO static tests, SDK stubs, and coverage tools
-`src/tools/` | Firmware and FX3 QSPI image utilities
+`src/tools/` | SNES parallel-ROM and FX3 QSPI image utilities
 `src/main.cpp` | Firmware startup, shared RAM, multicore setup, and main service loop
 
 ---

@@ -103,12 +103,18 @@ build_production_stub() {
         "${PRODUCTION_SOURCES[@]}" -o "$BUILD/superfx3_stub_link"
 }
 
+build_production_stub_dual_rom() {
+    "$CXX" "${COMMON_FLAGS[@]}" -DSNES_PARALLEL_ROM_COUNT=2 "${PICO_INCLUDES[@]}" \
+        "${PRODUCTION_SOURCES[@]}" -o "$BUILD/superfx3_dual_rom_stub_link"
+}
+
 printf "Compiler: %s\n" "$("$CXX" --version | head -n 1)"
 
 echo
 echo "== Python/static tests =="
 run_stage "PIO static checks" python3 tests/pio_static_tests.py
 run_stage "QSPI image packer" python3 tests/packer_tests.py
+run_stage "SNES ROM bus image" python3 tests/snes_rom_image_tests.py
 
 echo
 echo "== Portable core tests =="
@@ -135,6 +141,7 @@ run_stage "RUN register_backend_tests" "$BUILD/register_backend_tests"
 echo
 echo "== Full production strict stub link =="
 run_stage "CXX production stub link" build_production_stub
+run_stage "CXX dual-ROM stub link" build_production_stub_dual_rom
 
 echo
 status "All host/static tests" "PASS"

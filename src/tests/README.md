@@ -4,11 +4,12 @@
 
 - `core_tests.cpp` keeps the fixed and randomized 8bpp bit-transpose vectors on the real PLOT/pixel-cache path, checks the 20-tile FX3 layout stride, RON/RAN bypass, R15/register mapping, and the complete legacy blocked-ROM byte pattern.
 - `opcode_tests.cpp` exercises every opcode dispatch entry, then checks representative control, ALU, data, graphics, cache, and timing paths with explicit results.
-- `fx_core_sanity.cpp` checks the current FX3/PDF behavior: 8bpp PLOT/pixel-cache behavior, all three clear regions, MERGE command dispatch, linear QSPI ROM backend access and GSU ROM mapping, VCR, R15/STOP behavior, and simultaneous FX3 CPU ROM/RAM visibility.
+- `fx_core_sanity.cpp` checks the current FX3 behavior: 8bpp PLOT/pixel-cache behavior, all three clear regions, MERGE command dispatch, linear QSPI ROM backend access and GSU ROM mapping, VCR, R15/STOP behavior, and simultaneous FX3 CPU ROM/RAM visibility.
 - `sync_tests.cpp` exercises the cross-core command queue, snapshots, reset retry, STOP handoff, IRQ acknowledgement, and legacy GSU ownership notifications without RP2350 hardware.
 - `register_backend_tests.cpp` covers register read/write side effects and the host-testable RP2350 backend callbacks and bounds checks.
 - `pio_static_tests.py` interprets the PIO source and exhaustively checks routing/selector decisions, instruction-memory use, write capture packing, WAIT GPIOs against `boards/snes_fx3.h`, the C++/PIO IRQ contract, and the custom-board CMake setup.
 - `packer_tests.py` verifies the combined QSPI image layout, padding, 4/8 MiB placement, and invalid-layout rejection.
+- `snes_rom_image_tests.py` checks LoROM, HiROM, ExLoROM, and ExHiROM address mapping plus the 16 MiB parallel-flash bus image.
 
 Run the complete host/static suite with:
 

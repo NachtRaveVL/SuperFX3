@@ -10,5 +10,7 @@ DECLARE_PIO(snes_write_fx3)
 DECLARE_PIO(snes_write_gsu)
 DECLARE_PIO(snes_reset)
 DECLARE_PIO(snes_read_fx3)
+DECLARE_PIO(snes_read_fx3_dual)
 DECLARE_PIO(snes_read_gsu)
+DECLARE_PIO(snes_read_gsu_dual)
 #undef DECLARE_PIO

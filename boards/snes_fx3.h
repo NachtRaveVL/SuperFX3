@@ -78,7 +78,7 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 
 // --- SNES CONTROL BUS ---
 
-// GPIO16-GPIO27 correspond to the SNES cartridge edge control signals.
+// GPIO16-GPIO26 carry the SNES cartridge control signals used by this board.
 #define SNES_SYSTEM_CLK_PIN 16
 #define SNES_CPU_CLOCK_PIN  17
 #define SNES_RD_N_PIN       18
@@ -90,26 +90,39 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 #define SNES_IRQ_N_PIN      24
 #define SNES_PARD_N_PIN     25
 #define SNES_PAWR_N_PIN     26
-#define SNES_EXPAND_PIN     27
+
 
 // /CART is the SNES cartridge ROM select signal.
 #define SNES_ROMSEL_N_PIN SNES_CART_N_PIN
 
 // --- BOARD BUS CONTROL ---
 
+// One parallel ROM is the default. Populate ROM1 only when the bus image needs A23.
+#ifndef SNES_PARALLEL_ROM_COUNT
+#define SNES_PARALLEL_ROM_COUNT 1
+#endif
+
+#if SNES_PARALLEL_ROM_COUNT != 1 && SNES_PARALLEL_ROM_COUNT != 2
+#error "SNES_PARALLEL_ROM_COUNT must be 1 or 2"
+#endif
+
+// GPIO27 is internal to the board firmware and is not connected to the
+// SNES cartridge edge. PIO0 generates this signal from the address decode
+// and PIO1/PIO2 use it to select SuperFX register transactions.
+#define SNES_SERVICE_SEL_PIN 27
+
+// GPIO28-GPIO31 keep the transceiver controls and ROM enables in adjacent physical pairs.
 // External data-bus transceiver direction.
 #define SNES_DATA_DIR_PIN 28
 
-// Global bus transceiver output-enable, active low.
+// Global address/data bus transceiver output-enable, active low.
 #define SNES_BUS_OE_N_PIN 29
 
-// External cartridge ROM output-enable, active low.
-#define SNES_ROM_OE_N_PIN 30
+// Primary cartridge ROM output-enable, active low.
+#define SNES_ROM0_OE_N_PIN 30
 
-// GPIO31 is internal to the board firmware and is not connected to the
-// SNES cartridge edge. PIO0 generates this signal from the address decode
-// and PIO1/PIO2 use it to select SuperFX register transactions.
-#define SNES_SERVICE_SEL_PIN 31
+// Optional upper cartridge ROM output-enable, active low.
+#define SNES_ROM1_OE_N_PIN 31
 
 // --- BOARD SIGNAL POLARITY ---
 
@@ -128,7 +141,7 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 #define SNES_CONTROL_COUNT 16
 
 #define SNES_BUS_CTRL_BASE  28
-#define SNES_BUS_CTRL_COUNT 3
+#define SNES_BUS_CTRL_COUNT 4
 
 // --- GPIO MASKS ---
 
@@ -148,13 +161,12 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 #define SNES_IRQ_N_MASK      (1ULL << SNES_IRQ_N_PIN)
 #define SNES_PARD_N_MASK     (1ULL << SNES_PARD_N_PIN)
 #define SNES_PAWR_N_MASK     (1ULL << SNES_PAWR_N_PIN)
-#define SNES_EXPAND_MASK     (1ULL << SNES_EXPAND_PIN)
-
+#define SNES_SERVICE_SEL_MASK (1ULL << SNES_SERVICE_SEL_PIN)
 #define SNES_DATA_DIR_MASK    (1ULL << SNES_DATA_DIR_PIN)
 #define SNES_BUS_OE_N_MASK    (1ULL << SNES_BUS_OE_N_PIN)
-#define SNES_ROM_OE_N_MASK    (1ULL << SNES_ROM_OE_N_PIN)
-#define SNES_SERVICE_SEL_MASK (1ULL << SNES_SERVICE_SEL_PIN)
-#define SNES_BUS_CTRL_MASK    (SNES_DATA_DIR_MASK | SNES_BUS_OE_N_MASK | SNES_ROM_OE_N_MASK)
+#define SNES_ROM0_OE_N_MASK   (1ULL << SNES_ROM0_OE_N_PIN)
+#define SNES_ROM1_OE_N_MASK   (1ULL << SNES_ROM1_OE_N_PIN)
+#define SNES_BUS_CTRL_MASK    (SNES_DATA_DIR_MASK | SNES_BUS_OE_N_MASK | SNES_ROM0_OE_N_MASK | SNES_ROM1_OE_N_MASK)
 
 // --- PIO LAYOUT ---
 
@@ -180,7 +192,8 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 // PIO side-set group:
 //   side-set 0 = DATA_DIR
 //   side-set 1 = /BUS_OE
-//   side-set 2 = /ROM_OE
+//   side-set 2 = /ROM0_OE
+// /ROM1_OE is driven separately through the read SM SET pin when ROM1 is populated.
 #define SNES_PIO_SIDESET_BASE  SNES_DATA_DIR_PIN
 #define SNES_PIO_SIDESET_COUNT 3
 

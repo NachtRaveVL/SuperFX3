@@ -7,9 +7,9 @@
 ; so WAIT GPIO operands below remain numeric. tests/pio_static_tests.py verifies
 ; those operands against boards/snes_fx3.h to keep the PIO source and PCB map locked together.
 
-; GPIO31 is an internal service-select signal. PIO0 continuously decodes
+; GPIO27 is an internal service-select signal. PIO0 continuously decodes
 ; A12-A15 so PIO1/PIO2 can reject unrelated SNES transactions quickly.
-; FIXME: Verify GPIO31 service-select setup time relative to /RD and /WR.
+; FIXME: Verify GPIO27 service-select setup time relative to /RD and /WR.
 ; The select bit comes from a separate PIO0 state machine, so capture a trace and prove
 ; the read/write state machines never sample a stale decode.
 .program snes_select_fx3
@@ -64,7 +64,7 @@ gsu_not_selected:
 ; PIO1 sees GPIO16-47. It captures A16-A23 + D0-D7 immediately after
 ; /WR asserts, then pulls the matching PIO0 A0-A15 capture through DMA.
 ; FIXME: Stress-test write pairing through FIFO saturation and pause/resume.
-; Normal FIFO ordering keeps A0-A15 matched with A16-A23+D0-D7, but we still need to
+; Normal FIFO ordering keeps A0-A15 matched with A16-A23+D0-D7, but hardware testing must
 ; prove that no captured write is dropped or paired with the following transaction.
 ; With IN shifting left, rebuilding ISR with IN Y,16 produces:
 ;   bits  0-7  = A16-A23
@@ -143,36 +143,32 @@ gsu_cpu_write:
 .wrap
 
 ; Side-set pins are GPIO28-30 in this order:
-;   bit0 DATA_DIR, bit1 /BUS_OE, bit2 /ROM_OE
+;   bit0 DATA_DIR, bit1 /BUS_OE, bit2 /ROM0_OE
 ;
-; side 4 = SNES -> cart, bus connected, ROM disabled
-; side 1 = cart -> SNES, bus connected, ROM enabled
-; side 7 = cart -> SNES, bus isolated,  ROM disabled
-; side 5 = cart -> SNES, bus connected, ROM disabled
+; side 4 = SNES -> RP2350, bus connected, ROM0 disabled
+; side 5 = cart -> SNES, bus connected, ROM0 disabled
+; side 1 = cart -> SNES, bus connected, ROM0 enabled
+; side 7 = cart -> SNES, bus isolated, ROM0 disabled
+;
+; Optional /ROM1_OE on GPIO31 is controlled through the read SM SET pin.
+; It remains disabled in single-ROM builds and is asserted only by the dual-ROM
+; programs after A23 has selected the upper physical device.
 ;
 ; The response word supplied by core0 is:
-;   bit 0      drive flag
+;   bit 0      reserved
 ;   bits 1-8   data byte
 ;   bits 9-16  0xFF when driving, to enable D0-D7 PIO directions
 ;   bits 17-24 zero, to release D0-D7 after /RD rises
 ;
 ; FIXME: Close the SNES read timing budget with a worst-case hardware measurement.
-; Include PIO input synchronization, decode latency, /ROM_OE assertion, CPU IRQ service,
+; Include PIO input synchronization, decode latency, ROM /OE assertion, CPU IRQ service,
 ; data-direction changes, and the final data-valid margin before /RD rises.
 ;
-; FX3 Technical Specifications v1.0 section 6 defines the 65816 cartridge map:
-;   $00-$3F:$8000-$FFFF  ROM
-;   $40-$6F:$0000-$FFFF  ROM
-;   $70-$71:$0000-$FFFF  FX SRAM
-;   $80-$BF:$8000-$FFFF  ROM mirror
-;   $C0-$FF:$0000-$FFFF  ROM mirror
+; $70/$71 are removed from the parallel-ROM path for shared SRAM. Other /ROMSEL
+; cycles remain direct parallel-ROM reads so a pre-striped bus image can expose the
+; intended SNES ROM map without changing address lines during a read.
 ;
-; /ROMSEL can cover a broader cartridge window than that map, so the entire low
-; $7x bank group is sent to the CPU handler. It serves $70/$71 as SRAM and leaves
-; the remaining unmapped $72-$7D cartridge space undriven. Decode stays at side 4
-; so /ROM_OE is never asserted speculatively during an SRAM/unmapped read.
-;
-; X = 7, used only as the A20-A23 top-nibble comparison constant in FX3 mode.
+; X = 56, matching A17-A23 for banks $70/$71 while ignoring A16.
 .program snes_read_fx3
 .side_set 3
 .wrap_target
@@ -183,34 +179,82 @@ read_fx3_loop:
     out y, 1 side 4
     jmp !y fx3_snes_read side 4
     jmp pin fx3_cpu_read side 4
-    jmp fx3_no_drive side 4
+    jmp read_fx3_loop side 4
 
 fx3_snes_read:
-    ; OSR now begins at GPIO21. Skip GPIO21-GPIO31, then A16-A19.
-    ; The next four bits are A20-A23, i.e. the SNES bank's high nibble.
-    out null, 11 side 4
-    out null, 4 side 4
-    out y, 4 side 4
-    jmp x!=y fx3_rom_wait side 4
-    jmp fx3_cpu_read side 4
+    ; Point the data bus toward the SNES while ROM0 remains disabled.
+    ; Skip GPIO21-GPIO31 and A16, then compare A17-A23 against $70/$71.
+    out null, 11 side 5
+    out null, 1 side 5
+    out y, 7 side 5
+    jmp x!=y fx3_rom0_wait side 5
+    jmp fx3_cpu_read side 5
 
-fx3_rom_wait:
-    wait 1 gpio 18 side 1
-    jmp read_fx3_loop side 4
+fx3_rom0_wait:
+    wait 1 gpio 18 side 1 [3]
+    ; Disable ROM0 and hold the outward data direction before returning to listen.
+    jmp read_fx3_loop side 5 [3]
 
 fx3_cpu_read:
-    irq 0 side 4
-    pull block side 4
-    out y, 1 side 4
-    jmp !y fx3_no_drive side 4
-    out pins, 8 side 7
-    out pindirs, 8 side 7
-    wait 1 gpio 18 side 5
-    out pindirs, 8 side 7
-    jmp read_fx3_loop side 4
+    irq 0 side 5
+    pull block side 5
+    out null, 1 side 5
+    out pins, 8 side 5
+    out pindirs, 8 side 5
+    wait 1 gpio 18 side 5 [3]
+    out pindirs, 8 side 5
+    jmp read_fx3_loop side 5 [3]
 
-fx3_no_drive:
-    wait 1 gpio 18 side 4
+.wrap
+
+; Dual-ROM FX3 variant. A23 selects ROM0 or ROM1 after the shared-RAM decode.
+.program snes_read_fx3_dual
+.side_set 3
+.wrap_target
+read_fx3_dual_loop:
+    wait 0 gpio 18 side 4
+    in pins, 20 side 4
+    mov osr, isr side 4
+    out y, 1 side 4
+    jmp !y fx3_dual_snes_read side 4
+    jmp pin fx3_dual_cpu_read side 4
+    jmp read_fx3_dual_loop side 4
+
+fx3_dual_snes_read:
+    ; Switch data outward first while both ROM outputs remain disabled.
+    out null, 11 side 5
+    out null, 1 side 5
+    out y, 7 side 5
+    mov osr, y side 5
+    jmp x!=y fx3_dual_rom_select side 5
+    jmp fx3_dual_cpu_read side 5
+
+fx3_dual_rom_select:
+    out null, 6 side 5
+    out y, 1 side 5
+    jmp !y fx3_dual_rom0_wait side 5
+
+fx3_dual_rom1_wait:
+    set pins, 0 side 5
+    wait 1 gpio 18 side 5 [3]
+    ; Release ROM1 before returning DATA_DIR to the listening direction.
+    set pins, 1 side 5 [3]
+    jmp read_fx3_dual_loop side 5 [3]
+
+fx3_dual_rom0_wait:
+    wait 1 gpio 18 side 1 [3]
+    jmp read_fx3_dual_loop side 5 [3]
+
+fx3_dual_cpu_read:
+    irq 0 side 5
+    pull block side 5
+    out null, 1 side 5
+    out pins, 8 side 5
+    out pindirs, 8 side 5
+    wait 1 gpio 18 side 5 [3]
+    out pindirs, 8 side 5
+    jmp read_fx3_dual_loop side 5 [3]
+
 .wrap
 
 ; X is maintained by the firmware for the original GSU ROM ownership rule:
@@ -231,43 +275,89 @@ read_gsu_loop:
     out y, 1 side 4
     jmp !y gsu_snes_read side 4
     jmp pin gsu_cpu_read side 4
-    jmp gsu_no_drive side 4
+    jmp read_gsu_loop side 4
 
 gsu_snes_read:
-    jmp !x gsu_rom_allowed side 4
-    jmp gsu_cpu_read side 4
-
-gsu_rom_allowed:
-    out null, 11 side 1
-    out null, 1 side 1
-    out y, 5 side 1
-    set x, 24 side 1
-    jmp x!=y gsu_not_special side 1
-    out y, 1 side 1
-    jmp !y gsu_not_special side 1
-    ; A23 selects $70/$71 versus the $F0/$F1 mirror. Both are RAM, so
-    ; once A17-A22 match we intentionally do not test A23 here.
-    set x, 0 side 4
-    jmp gsu_cpu_read side 4
-
-gsu_not_special:
-    set x, 0 side 1
-
-gsu_rom_wait:
-    wait 1 gpio 18 side 1
-    jmp read_gsu_loop side 4
+    ; Point data outward while ROM0 remains disabled, then honor GSU ownership.
+    jmp !x gsu_rom_allowed side 5
 
 gsu_cpu_read:
-    irq 0 side 4
-    pull block side 4
-    out y, 1 side 4
-    jmp !y gsu_no_drive side 4
-    out pins, 8 side 7
-    out pindirs, 8 side 7
-    wait 1 gpio 18 side 5
-    out pindirs, 8 side 7
-    jmp read_gsu_loop side 4
+    irq 0 side 5
+    pull block side 5
+    ; The firmware always supplies a driven byte, using 0xFF for open bus.
+    out null, 1 side 5
+    out pins, 8 side 5
+    out pindirs, 8 side 5
+    wait 1 gpio 18 side 5 [3]
+    out pindirs, 8 side 5
+    jmp read_gsu_loop side 5 [3]
 
-gsu_no_drive:
-    wait 1 gpio 18 side 4
+gsu_rom_allowed:
+    ; A17-A22 = 56 identifies the $70/$71 and $F0/$F1 shared-RAM banks.
+    ; A16 and A23 are intentionally ignored for this legacy RAM mirror.
+    out null, 11 side 5
+    out null, 1 side 5
+    out y, 6 side 5
+    set x, 56 side 5
+    jmp x!=y gsu_not_special side 5
+    set x, 0 side 5
+    jmp gsu_cpu_read side 5
+
+gsu_not_special:
+    set x, 0 side 5
+    wait 1 gpio 18 side 1 [3]
+    jmp read_gsu_loop side 5 [3]
+.wrap
+
+; Dual-ROM legacy GSU variant. A23 selects ROM0 or ROM1 only after the
+; $70/$71 + $F0/$F1 shared-RAM mirrors have been removed from the ROM path.
+.program snes_read_gsu_dual
+.side_set 3
+.wrap_target
+read_gsu_dual_loop:
+    wait 0 gpio 18 side 4
+    in pins, 20 side 4
+    mov osr, isr side 4
+    out y, 1 side 4
+    jmp !y gsu_dual_snes_read side 4
+    jmp pin gsu_dual_cpu_read side 4
+    jmp read_gsu_dual_loop side 4
+
+gsu_dual_snes_read:
+    jmp !x gsu_dual_rom_allowed side 5
+
+gsu_dual_cpu_read:
+    irq 0 side 5
+    pull block side 5
+    ; The firmware always supplies a driven byte, using 0xFF for open bus.
+    out null, 1 side 5
+    out pins, 8 side 5
+    out pindirs, 8 side 5
+    wait 1 gpio 18 side 5 [3]
+    out pindirs, 8 side 5
+    jmp read_gsu_dual_loop side 5 [3]
+
+gsu_dual_rom0_wait:
+    wait 1 gpio 18 side 1 [3]
+    jmp read_gsu_dual_loop side 5 [3]
+
+gsu_dual_rom_allowed:
+    ; A17-A22 = 56 identifies the legacy shared-RAM mirrors; A23 remains for ROM selection.
+    out null, 11 side 5
+    out null, 1 side 5
+    out y, 6 side 5
+    set x, 56 side 5
+    jmp x!=y gsu_dual_not_special side 5
+    set x, 0 side 5
+    jmp gsu_dual_cpu_read side 5
+
+gsu_dual_not_special:
+    ; OSR now points at A23 because only A17-A22 were consumed above.
+    set x, 0 side 5
+    out y, 1 side 5
+    jmp !y gsu_dual_rom0_wait side 5
+    set pins, 0 side 5
+    wait 1 gpio 18 side 5 [3]
+    ; ROM1 is disabled for several PIO clocks before DATA_DIR returns inward.
+    set pins, 1 side 5 [3]
 .wrap

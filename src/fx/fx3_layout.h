@@ -18,11 +18,11 @@
 // commands, not a separately allocated hardware framebuffer.
 namespace fx3_layout {
 
-static constexpr uint32_t RAM_BANK_SIZE = 0x10000; ///< Bytes in each $70/$71 FX SRAM bank.
-static constexpr uint32_t PLANAR_BASE = 0x10000; ///< Start of planar framebuffer data in bank $71.
+static constexpr uint32_t RAM_BANK_SIZE = 0x10000;  ///< Bytes in each $70/$71 FX SRAM bank.
+static constexpr uint32_t PLANAR_BASE = 0x10000;    ///< Start of planar framebuffer data in bank $71.
 
-static constexpr uint8_t X_TILES = 27; ///< Visible framebuffer width in 8-pixel tiles.
-static constexpr uint8_t Y_TILES = 18; ///< Visible framebuffer height in 8-pixel tiles.
+static constexpr uint8_t X_TILES = 27;              ///< Visible framebuffer width in 8-pixel tiles.
+static constexpr uint8_t Y_TILES = 18;              ///< Visible framebuffer height in 8-pixel tiles.
 static constexpr uint16_t FRAMEBUFFER_WIDTH = static_cast<uint16_t>(X_TILES) * 8; ///< Visible framebuffer width in pixels.
 static constexpr uint16_t FRAMEBUFFER_HEIGHT = static_cast<uint16_t>(Y_TILES) * 8; ///< Visible framebuffer height in pixels.
 

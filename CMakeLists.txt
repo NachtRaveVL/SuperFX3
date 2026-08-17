@@ -18,6 +18,13 @@ else()
 endif()
 
 project(superfx3 C CXX ASM)
+
+set(SNES_PARALLEL_ROM_COUNT 1 CACHE STRING "Populated parallel ROM devices (1 or 2)")
+set_property(CACHE SNES_PARALLEL_ROM_COUNT PROPERTY STRINGS 1 2)
+if(NOT SNES_PARALLEL_ROM_COUNT STREQUAL "1" AND NOT SNES_PARALLEL_ROM_COUNT STREQUAL "2")
+    message(FATAL_ERROR "SNES_PARALLEL_ROM_COUNT must be 1 or 2.")
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,6 +68,7 @@ target_include_directories(superfx3 PRIVATE
 )
 
 target_compile_definitions(superfx3 PRIVATE
+    SNES_PARALLEL_ROM_COUNT=${SNES_PARALLEL_ROM_COUNT}
     $<$<CONFIG:Debug>:PARAM_ASSERTIONS_ENABLED_HARDWARE_PIO=1>
 )
 

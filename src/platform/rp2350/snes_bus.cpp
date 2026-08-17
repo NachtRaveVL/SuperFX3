@@ -24,6 +24,8 @@ static std::atomic<bool> g_bus_request {false};
 static std::atomic<bool> g_bus_granted {false};
 static SuperFx* g_fx = nullptr;
 static uint32_t g_rom_access_cycles = 0;
+static uint32_t g_rom_address_setup_cycles = 0;
+static uint32_t g_rom_address_hold_cycles = 0;
 static bool g_started = false;
 
 // Extracts D0-D7 from one RP2350B GPIO snapshot.
@@ -36,6 +38,22 @@ static inline uint64_t snes_address_output_value(uint32_t address) {
     return static_cast<uint64_t>(address & ((1u << SNES_ADDR_LO_COUNT) - 1u)) |
            (static_cast<uint64_t>((address >> SNES_ADDR_LO_COUNT) &
                                   ((1u << SNES_ADDR_HI_COUNT) - 1u)) << SNES_ADDR_HI_BASE);
+}
+
+// Disables both parallel ROM outputs before changing address ownership or direction.
+static inline void snes_rom_disable_all() {
+    gpio_put(SNES_ROM0_OE_N_PIN, SNES_ROM_DISABLE);
+    gpio_put(SNES_ROM1_OE_N_PIN, SNES_ROM_DISABLE);
+}
+
+// Enables the populated parallel ROM for one private cartridge-bus access.
+static inline void snes_rom_enable(uint32_t address) {
+#if SNES_PARALLEL_ROM_COUNT == 2
+    gpio_put(address & 0x00800000u ? SNES_ROM1_OE_N_PIN : SNES_ROM0_OE_N_PIN, SNES_ROM_ENABLE);
+#else
+    (void)address;
+    gpio_put(SNES_ROM0_OE_N_PIN, SNES_ROM_ENABLE);
+#endif
 }
 
 // Returns true only when neither SNES address bus is in an active transaction.
@@ -72,13 +90,15 @@ void snes_bus_init() {
         gpio_set_dir(pin, GPIO_IN);
     }
 
-    // Program the safe values before turning the external bus transceiver around.
-    gpio_put(SNES_BUS_OE_N_PIN, SNES_BUS_DISABLE);
-    gpio_set_dir(SNES_BUS_OE_N_PIN, GPIO_OUT);
+    // Program safe values before enabling the external bus transceivers.
     gpio_put(SNES_DATA_DIR_PIN, SNES_DATA_DIR_IN);
     gpio_set_dir(SNES_DATA_DIR_PIN, GPIO_OUT);
-    gpio_put(SNES_ROM_OE_N_PIN, SNES_ROM_DISABLE);
-    gpio_set_dir(SNES_ROM_OE_N_PIN, GPIO_OUT);
+    gpio_put(SNES_BUS_OE_N_PIN, SNES_BUS_DISABLE);
+    gpio_set_dir(SNES_BUS_OE_N_PIN, GPIO_OUT);
+    gpio_put(SNES_ROM0_OE_N_PIN, SNES_ROM_DISABLE);
+    gpio_set_dir(SNES_ROM0_OE_N_PIN, GPIO_OUT);
+    gpio_put(SNES_ROM1_OE_N_PIN, SNES_ROM_DISABLE);
+    gpio_set_dir(SNES_ROM1_OE_N_PIN, GPIO_OUT);
     gpio_put(SNES_IRQ_N_PIN, 1);
     gpio_set_dir(SNES_IRQ_N_PIN, GPIO_OUT);
 
@@ -93,6 +113,12 @@ void snes_bus_init() {
     // The physical ROM is rated for 100 ns. Round upward, then retain two clocks of margin.
     const uint32_t sys_hz = clock_get_hz(clk_sys);
     g_rom_access_cycles = ((sys_hz + 9999999u) / 10000000u) + 2;
+
+    // Keep explicit setup/hold margins around private GSU address driving.
+    // Direct SNES reads naturally accumulate more setup time in the PIO decode path.
+    g_rom_address_setup_cycles = ((sys_hz + 49999999u) / 50000000u) + 1;
+    g_rom_address_hold_cycles = ((sys_hz + 99999999u) / 100000000u) + 1;
+    // Idle means listening: the bus is connected and data points into the RP2350.
     gpio_put(SNES_BUS_OE_N_PIN, SNES_BUS_ENABLE);
 }
 
@@ -124,17 +150,19 @@ uint8_t snes_rom_read(void* context, uint32_t address) {
     g_bus_request.store(true, std::memory_order_release);
     while (!g_bus_granted.load(std::memory_order_acquire)) tight_loop_contents();
 
-    gpio_put(SNES_ROM_OE_N_PIN, SNES_ROM_DISABLE);
+    snes_rom_disable_all();
 
     gpio_put_masked64(SNES_ADDR_MASK, snes_address_output_value(address));
-
     gpio_set_dir_masked64(SNES_ADDR_MASK, SNES_ADDR_MASK);
-    gpio_put(SNES_ROM_OE_N_PIN, SNES_ROM_ENABLE);
+
+    busy_wait_at_least_cycles(g_rom_address_setup_cycles);
+    snes_rom_enable(address);
 
     busy_wait_at_least_cycles(g_rom_access_cycles);
     const uint8_t data = snes_read_data(gpio_get_all64());
 
-    gpio_put(SNES_ROM_OE_N_PIN, SNES_ROM_DISABLE);
+    snes_rom_disable_all();
+    busy_wait_at_least_cycles(g_rom_address_hold_cycles);
     gpio_set_dir_masked64(SNES_ADDR_MASK, 0);
 
     g_bus_request.store(false, std::memory_order_release);
@@ -155,7 +183,7 @@ void snes_bus_service() {
         // the in-flight physical ROM access releases this grant.
         if (g_bus_request.load(std::memory_order_acquire) || !snes_bus_idle()) return;
 
-        gpio_put(SNES_ROM_OE_N_PIN, SNES_ROM_DISABLE);
+        snes_rom_disable_all();
         gpio_set_dir_masked64(SNES_ADDR_MASK, 0);
         snes_pio_resume();
         g_bus_granted.store(false, std::memory_order_release);
