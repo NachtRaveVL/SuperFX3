@@ -285,8 +285,7 @@ static void snes_sync_rom_ownership_locked() {
         return;
     }
 
-    const uint32_t generation =
-        g_rom_ownership_generation.load(std::memory_order_acquire);
+    const uint32_t generation = g_rom_ownership_generation.load(std::memory_order_acquire);
     if (generation == g_rom_ownership_applied_generation.load(std::memory_order_relaxed))
         return;
 

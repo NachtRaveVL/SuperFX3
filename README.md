@@ -75,27 +75,27 @@ CMake selects `snes_fx3` automatically and rejects other Pico board definitions.
 
 ## RP2350B Pin Setup
 
-Signal | RP2350B GPIO
---- | ---
-A0-A15 | GPIO0-GPIO15
-SYSTEM CLK | GPIO16
-CPU CLOCK | GPIO17
-`/RD` | GPIO18
-`/WR` | GPIO19
-`/CART` / `/ROMSEL` | GPIO20
-`/RESET` | GPIO21
-REFRESH | GPIO22
-`/WRAMSEL` | GPIO23
-`/IRQ` | GPIO24
-`/PARD` | GPIO25
-`/PAWR` | GPIO26
-Internal SuperFX service select | GPIO27
-`/ROM0_OE` | GPIO28
-`/ROM1_OE` (optional) | GPIO29
-`/BUS_OE` | GPIO30
-DATA_DIR | GPIO31
-A16-A23 | GPIO32-GPIO39
-D0-D7 | GPIO40-GPIO47
+Signal | RP2350B GPIO | Description
+--- | --- | ---
+`A0-A15` | GPIO0-GPIO15 | Lower 16 address lines (of 24-line address bus)
+`MCK` | GPIO16 | 21.47727 MHz SNES master clock from the extended cartridge edge (optional)
+`SYSCK` | GPIO17 | 5A22 CPU memory-cycle clock
+`/RD` | GPIO18 | CPU memory read strobe
+`/WR` | GPIO19 | CPU memory write strobe
+`/CART` / `/ROMSEL` | GPIO20 | Cartridge ROM select
+`/RESET` | GPIO21 | Console reset
+`REFRESH` | GPIO22 | SNES memory refresh signal
+`/WRAMSEL` | GPIO23 | SNES work RAM select
+`/IRQ` | GPIO24 | Cartridge interrupt request
+`/PARD` | GPIO25 | Expansion port read strobe
+`/PAWR` | GPIO26 | Expansion port write strobe
+Internal SuperFX service select | GPIO27 | Internal SuperFX register access select
+`/ROM0_OE` | GPIO28 | Primary parallel ROM output enable
+`/ROM1_OE` | GPIO29 | Optional secondary parallel ROM output enable
+`/BUS_OE` | GPIO30 | Cartridge bus transceiver output enable
+`DATA_DIR` | GPIO31 | Data bus transceiver direction
+`A16-A23` | GPIO32-GPIO39 | Upper 8 address lines (of 24-line address bus)
+`D0-D7` | GPIO40-GPIO47 | 8-bit cartridge data bus
 
 GPIO27 is internal to the cartridge. PIO0 generates it from the address decode so the other bus handlers can identify SuperFX register transactions.
 
@@ -136,6 +136,7 @@ The Pico SDK also generates `.bin`, `.hex`, `.uf2`, map, and disassembly outputs
 
 # FX3 Diagnostic ROM
 
+![SuperFX3 Diagnostic ROM](testrom/testrom.png)  
 `testrom/` contains a SNES diagnostic application for exercising the FX3 implementation. The 65816 owns the menu, test setup, timeouts, validation, and display while small GSU kernels perform the operations under test.
 
 Build it with:

@@ -41,8 +41,7 @@ void SuperFx::fx3_clear(uint8_t first_block, uint8_t last_block) {
     const uint32_t block_stride = static_cast<uint32_t>(fx3_layout::PLANAR_Y_TILE_STRIDE) << 6;
     const uint32_t block_count = static_cast<uint32_t>(last_block - first_block) + 1;
 
-    uint32_t row_address = fx3_layout::PLANAR_BASE +
-        (static_cast<uint32_t>(first_block) * block_stride);
+    uint32_t row_address = fx3_layout::PLANAR_BASE + (static_cast<uint32_t>(first_block) * block_stride);
 
     // 18 active tile rows.
     for (uint32_t row = 0; row < 18; row++) {

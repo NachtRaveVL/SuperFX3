@@ -101,10 +101,9 @@ static void __not_in_flash_func(fx_sync_publish_state)() {
     if (g_irq_clear_pending.load(std::memory_order_acquire))
         flags_high &= 0x7F;
 
-    const uint32_t snapshot =
-        static_cast<uint32_t>(state.r[15]) |
-        (static_cast<uint32_t>(fx_sync_flags_low(state)) << 16) |
-        (static_cast<uint32_t>(flags_high) << 24);
+    const uint32_t snapshot = static_cast<uint32_t>(state.r[15]) |
+                              (static_cast<uint32_t>(fx_sync_flags_low(state)) << 16) |
+                              (static_cast<uint32_t>(flags_high) << 24);
 
     const uint32_t access = fx_sync_access_state(*g_fx);
     const uint32_t previous_access = g_access_snapshot.exchange(access, std::memory_order_release);
@@ -210,11 +209,9 @@ bool fx_sync_core1_service() {
         // queue a command at the same time core 1 decides to release state_.
         fx_sync_lock_state();
 
-        const bool commands_pending =
-            g_command_read.load(std::memory_order_acquire) !=
-            g_command_write.load(std::memory_order_acquire);
-        const bool irq_clear_pending =
-            g_irq_clear_pending.load(std::memory_order_acquire);
+        const bool commands_pending = g_command_read.load(std::memory_order_acquire) !=
+                                      g_command_write.load(std::memory_order_acquire);
+        const bool irq_clear_pending = g_irq_clear_pending.load(std::memory_order_acquire);
 
         if (!commands_pending && !irq_clear_pending)
             g_core1_owns_fx.store(false, std::memory_order_release);
@@ -249,15 +246,10 @@ uint8_t __not_in_flash_func(fx_sync_cpu_read)(uint16_t addr) {
 
     fx_sync_unlock_state();
 
-    const uint32_t snapshot =
-        g_runtime_snapshot.load(std::memory_order_acquire);
-
-    const uint16_t r15 =
-        static_cast<uint16_t>(snapshot);
-    const uint8_t sfr_low =
-        static_cast<uint8_t>(snapshot >> 16);
-    const uint8_t sfr_high =
-        static_cast<uint8_t>(snapshot >> 24);
+    const uint32_t snapshot = g_runtime_snapshot.load(std::memory_order_acquire);
+    const uint16_t r15 = static_cast<uint16_t>(snapshot);
+    const uint8_t sfr_low = static_cast<uint8_t>(snapshot >> 16);
+    const uint8_t sfr_high = static_cast<uint8_t>(snapshot >> 24);
 
     // These reads remain valid while core 1 owns FxState. Handle them before
     // looking at the GO/running bit: after STOP there is a short handoff window

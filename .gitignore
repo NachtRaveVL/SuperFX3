@@ -7,6 +7,7 @@
 *.uf2
 *.hex
 *.map
+*.pyc
 
 # Precompiled headers
 *.gch
@@ -55,6 +56,9 @@ Testing/
 
 # Package managers
 vcpkg_installed/
+
+# IDEs
+.vscode/
 
 # OS junk
 .DS_Store
