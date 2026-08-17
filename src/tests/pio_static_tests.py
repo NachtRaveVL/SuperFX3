@@ -276,6 +276,17 @@ def test_source_driven_routes(pio_text: str) -> None:
                                     f"{actual}, expected {expected}"
                                 )
 
+
+def test_set_immediates_are_encodable(programs: dict[str, list[str]]) -> None:
+    # PIO SET has a five-bit immediate. Keep this explicit here because source-level
+    # routing tests can otherwise model an instruction that pioasm cannot encode.
+    for name, instructions in programs.items():
+        for raw in instructions:
+            op = normalize_instruction(raw)
+            match = re.match(r"set\s+\w+,\s*(0x[0-9a-fA-F]+|\d+)$", op)
+            if match and int(match.group(1), 0) > 31:
+                fail(f"{name} uses an unencodable PIO SET immediate: {op}")
+
 def test_instruction_ram(programs: dict[str, list[str]]) -> None:
     expected = {
         "snes_select_fx3", "snes_select_gsu", "snes_write_addr", "snes_write_fx3",
@@ -342,8 +353,9 @@ def test_special_bank_decode(pio_text: str) -> None:
         next_program = section.find(".program ")
         if next_program >= 0:
             section = section[:next_program]
-        if "A17-A22 = 56" not in section or "out y, 6" not in section:
-            fail(f"{name} no longer ignores A23 for the $70/$71 and $F0/$F1 RAM mirrors")
+        if ("A17-A22 = 56" not in section or "out y, 5" not in section or
+                "set x, 24" not in section or "out x, 1" not in section):
+            fail(f"{name} no longer checks all six A17-A22 bits for the legacy RAM mirrors")
 
     for name in ("snes_read_fx3", "snes_read_fx3_dual"):
         section = pio_text.split(f".program {name}", 1)[1]
@@ -631,6 +643,7 @@ def main() -> None:
         fail("RP2350 PIO source must declare .pio_version 1")
     programs = parse_programs(pio_text)
     test_instruction_ram(programs)
+    test_set_immediates_are_encodable(programs)
     test_jump_targets_resolve(pio_text)
     test_source_driven_routes(pio_text)
     test_write_capture()

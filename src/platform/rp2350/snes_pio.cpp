@@ -250,16 +250,21 @@ static uint64_t snes_isolated_control_values() {
            (static_cast<uint64_t>(SNES_ROM_DISABLE) << SNES_ROM1_OE_N_PIN);
 }
 
+// Loads a full-width value into the read SM's X register. PIO SET only has a
+// 5-bit immediate, so FX3's A17-A23 compare value ($38) must come through OSR.
+static void snes_set_read_x(uint32_t value) {
+    pio_sm_put(pio2, g_read_sm, value);
+    pio_sm_exec(pio2, g_read_sm, pio_encode_pull(false, true));
+    pio_sm_exec(pio2, g_read_sm, pio_encode_mov(pio_x, pio_osr));
+}
+
 // Updates the read-state-machine scratch value used for ROM ownership/decode.
 // The caller must ensure the read SM is stopped or otherwise idle before changing X.
 static void snes_set_read_mode_x(bool blocked) {
     if (g_fx->config().chip == FxChip::FX3) {
         // FX3 read PIO compares X against A17-A23 so only $70/$71 are
         // removed from the direct parallel-ROM path for shared SRAM.
-        pio_sm_exec(
-            pio2, g_read_sm,
-            pio_encode_set(pio_x, 56)
-        );
+        snes_set_read_x(56);
         g_rom_blocked_pio = false;
         return;
     }

@@ -294,11 +294,13 @@ gsu_cpu_read:
 
 gsu_rom_allowed:
     ; A17-A22 = 56 identifies the $70/$71 and $F0/$F1 shared-RAM banks.
-    ; A16 and A23 are intentionally ignored for this legacy RAM mirror.
-    out null, 11 side 5
-    out null, 1 side 5
-    out y, 6 side 5
-    set x, 56 side 5
+    ; SET cannot encode 56 directly, so compare the low five bits ($18)
+    ; and then the remaining high bit. A16 and A23 are intentionally ignored.
+    out null, 12 side 5
+    out y, 5 side 5
+    out x, 1 side 5
+    jmp !x gsu_not_special side 5
+    set x, 24 side 5
     jmp x!=y gsu_not_special side 5
     set x, 0 side 5
     jmp gsu_cpu_read side 5
@@ -343,10 +345,12 @@ gsu_dual_rom0_wait:
 
 gsu_dual_rom_allowed:
     ; A17-A22 = 56 identifies the legacy shared-RAM mirrors; A23 remains for ROM selection.
-    out null, 11 side 5
-    out null, 1 side 5
-    out y, 6 side 5
-    set x, 56 side 5
+    ; Split the compare because SET immediates are limited to five bits.
+    out null, 12 side 5
+    out y, 5 side 5
+    out x, 1 side 5
+    jmp !x gsu_dual_not_special side 5
+    set x, 24 side 5
     jmp x!=y gsu_dual_not_special side 5
     set x, 0 side 5
     jmp gsu_dual_cpu_read side 5

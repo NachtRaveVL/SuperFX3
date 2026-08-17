@@ -62,6 +62,7 @@ build_and_run() {
 # accumulate coverage across the complete suite rather than measuring one executable.
 build_and_run core_tests "${CORE_OBJECTS[@]}"
 build_and_run opcode_tests "${CORE_OBJECTS[@]}"
+build_and_run architectural_tests "${CORE_OBJECTS[@]}"
 build_and_run sync_tests "${CORE_OBJECTS[@]}" "$SYNC_OBJECT"
 build_and_run fx_core_sanity "${CORE_OBJECTS[@]}" "$BACKEND_OBJECT" tests/sdk_stubs/flash_end.cpp
 build_and_run register_backend_tests "${CORE_OBJECTS[@]}" "$BACKEND_OBJECT" tests/sdk_stubs/flash_end.cpp

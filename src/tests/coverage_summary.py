@@ -158,9 +158,9 @@ def main() -> None:
     print(f"Branch sites reached:              {branch_reached:6.2f}% of {branch_count} branches")
     print(f"Branch alternatives taken:         {branch_taken:6.2f}% of {branch_count} branches")
     print()
-    print("Not included in dynamic host coverage: main.cpp, snes_bus.cpp, and snes_pio.cpp.")
-    print("Those files are strict compile/link checked; PIO routing is exercised separately by")
-    print("the source-level PIO interpreter. Real GPIO/PIO/DMA timing still requires hardware tests.")
+    print("Not included in the coverage percentage: main.cpp, snes_bus.cpp, and snes_pio.cpp.")
+    print("snes_bus.cpp/snes_pio.cpp are dynamically exercised by the stateful integration harness;")
+    print("PIO routing is also interpreted exhaustively. Real GPIO/PIO/DMA timing still requires hardware tests.")
 
     failures: list[str] = []
     if core_lines < CORE_LINE_MIN:

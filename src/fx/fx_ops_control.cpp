@@ -10,7 +10,9 @@
 // Mesen-derived: closely follows MesenCE Gsu::STOP().
 void SuperFx::op_stop() {
     if (config_.chip == FxChip::FX3) {
-        // FX3 software polls R15 for completion.
+        // Unlimited FX3 execution has no later wall-clock step after STOP. Finish
+        // the last delayed store before publishing completion through R15.
+        wait_ram_operation();
         write_reg(15, 0);
     }
 

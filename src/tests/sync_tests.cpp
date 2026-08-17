@@ -53,7 +53,7 @@ static void test_queued_reset(SuperFx& fx) {
                  "queued reset did not return the FX3 core to reset state");
 }
 
-static void test_reset_retry_after_full_queue(SuperFx& fx) {
+static void test_reset_retry_after_full_queue(SuperFx& fx, TestMemory& memory) {
     test_require(fx_sync_cpu_write(0x703A, 0x18), "queue saturation SCMR write failed");
     test_require(fx_sync_cpu_write(0x701E, 0x20), "queue saturation start low-byte failed");
     test_require(fx_sync_cpu_write(0x701F, 0x00), "queue saturation start high-byte failed");
@@ -66,8 +66,14 @@ static void test_reset_retry_after_full_queue(SuperFx& fx) {
 
     test_require(!fx_sync_cpu_write(0x7038, 0xAA),
                  "register write unexpectedly entered a full command queue");
+
+    // A rejected reset must be inert. In particular, it must not clear the
+    // cartridge IRQ or leave a deferred IRQ acknowledgement behind.
+    memory.irq = true;
     test_require(!fx_sync_reset(), "reset unexpectedly entered a full command queue");
+    test_require(memory.irq, "rejected reset changed the externally visible IRQ state");
     test_require(fx_sync_core1_service(), "core 1 did not drain the saturated command queue");
+    test_require(memory.irq, "rejected reset left a deferred IRQ clear behind");
     test_require(fx_sync_reset(), "reset was not accepted after queue space became available");
     test_require(fx_sync_core1_service(), "retried reset was not serviced by core 1");
     test_require(!fx.running(), "retried reset did not stop FX3");
@@ -156,7 +162,7 @@ int main() {
     test_running_ram_access();
     test_stop_handoff(fx);
     test_queued_reset(fx);
-    test_reset_retry_after_full_queue(fx);
+    test_reset_retry_after_full_queue(fx, memory);
     test_direct_stopped_access(memory);
     test_legacy_ownership_snapshots();
 

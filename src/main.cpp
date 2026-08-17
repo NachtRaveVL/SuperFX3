@@ -7,7 +7,7 @@
  * Portions of this software are based on MesenCE's GSU implementation (GPLv3).
  *
  * Special thanks to Randy Linden and kandowantu.
- * Dedicated to Rebecca Heinemann and Jennel Jacquays.
+ * Dedicated to Rebecca Heineman and Jennell Jaquays.
  */
 
 #include <atomic>

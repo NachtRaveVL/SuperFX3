@@ -1,6 +1,6 @@
 # SuperFX3
 
-SuperFX3 firmware for RP2350B based SNES cartridges.
+SuperFX3 firmware for RP2350B-based SNES cartridges.
 
 This project implements the Super FX / GSU processor family in firmware, with the current hardware target being SuperFX3. It combines a software GSU core with the RP2350B's dual cores, PIO hardware, DMA, internal SRAM, and QSPI flash to service the SNES cartridge bus while running the SuperFX processor alongside the console.
 
@@ -9,29 +9,33 @@ License: GNU GPL v3 or later
 
 UNDER ACTIVE DEVELOPMENT -- WORK IN PROGRESS
 
-The firmware is now building cleanly with the real RP2350 toolchain and the complete host/static test suite is passing. Hardware bring-up, logic analyzer testing, and final SNES timing validation are still in progress.
+The current host/static test suite passes. Hardware bring-up, logic analyzer testing, and final SNES timing validation are still in progress.
 
 ---
 
 # Features
 
-* SuperFX / GSU instruction core with FX3 support
-* RP2350B (e.g. SC1510-A4 80-QFN) running at 150 MHz
+* Super FX / GSU instruction core with FX3 support
+* RP2350B (SC1510-A4 80-QFN) running at 150 MHz
 * Dual-core operation with SNES bus service on core 0 and FX code execution on core 1
 * PIO/interrupt-based SNES cartridge bus decoding, read handling, write capture, and control
-* 128 KiB (1 Mbit) of shared cartridge RAM stored in RP2350 internal SRAM
-  * 2x64 KiB banks at `$70:0000` and `$71:0000` (with 392 KiB left for firmware)
-  * 216×144 8bpp SNES planar framebuffer at `$71:0000` (with 33.625 KiB left over)
+* 128 KiB (1 Mbit) of volatile shared cartridge RAM stored in RP2350 internal SRAM
+  * 2 x 64 KiB banks at `$70:0000` and `$71:0000`
+  * Leaves 392 KiB of RP2350 SRAM available for firmware and runtime use
+  * 216×144 visible 8bpp SNES planar framebuffer in bank `$71`
 * 4 MiB (32 Mbit) of flash storage on the RP2350 QSPI flash interface
-  * 3 MiB reserved for GSU/FX program code and data
-  * 1 MiB reserved for firmware (padded with `0xFF`)
-* External parallel flash ROM for the SNES CPU, with one device by default and an optional second
+  * Upper 3 MiB reserved for the FX3 ROM image
+  * Lower 1 MiB available for RP2350 firmware
+* Separate external parallel flash ROM for the SNES CPU, with one device by default and an optional second
   * Supports 1-64 Mbit devices, up to 128 Mbit total with two 64 Mbit ROMs
   * Supports LoROM, HiROM, ExLoROM, ExHiROM, extended SuperFX, and raw bus images
-* FX3 8bpp PLOT and pixel-cache graphics path with dithering and native SNES planar output
-* FX3 direct-to-planar draw, read, and clear commands, skipping all chunky conversion
-* SuperFX register access, IRQ, RESET, STOP/GO, and cross-core synchronization
-* Fully tested codebase with code coverage reporting
+* FX3 8bpp PLOT/RPIX pixel-cache graphics path with native SNES planar output
+* Planar-only framebuffer path with no separate chunky framebuffer allocation
+  * FX3 MERGE C2P commands are skipped because PLOT writeback already produces final planar data
+  * FX3 MERGE clear commands remain supported
+* FX3 register access, RESET, STOP/GO, and cross-core synchronization
+* Legacy GSU IRQ behavior retained for FX1/FX2 compatibility, while FX3 completion follows the hardware behavior of polling R15
+* Host/static test suite with code coverage reporting
   * Host-side C++ tests for the processor core, opcodes, registers, synchronization, and backend
   * Static PIO tests that verify bus routing and board pin definitions
   * Coverage reporting for the portable processor core and host-testable RP2350 support code
@@ -45,13 +49,13 @@ The original GSU behavior is retained where useful for FX1/FX2 support, although
 The RP2350B is split into two main jobs.
 
 * Core 0 services the SNES cartridge bus and handles communication between the console and the SuperFX core.
-* Core 1 runs the SuperFX processor whenever the GSU has ownership and is in the running state.
+* Core 1 runs FX code while the GSU is in the running state.
 
 PIO handles the timing-sensitive cartridge bus work. One PIO block decodes the SuperFX service area, another captures SNES writes, and another services reads and bus-control changes.
 
-The SuperFX banks `$70-$71` are backed by 128 KiB of RP2350 internal SRAM, with the FX framebuffer living at the start of the second bank. The FX3 processor's private 3 MiB ROM image lives in a reserved partition at the top of the RP2350's primary QSPI flash.
+The SuperFX banks `$70-$71` are backed by 128 KiB of RP2350 internal SRAM. The planar framebuffer lives in bank `$71`, with no second chunky framebuffer allocated. The FX3 processor's private 3 MiB ROM image lives in a reserved partition at the top of the RP2350's primary QSPI flash.
 
-The QSPI FX3 ROM is not the main SNES game ROM. The cartridge's normal parallel ROM remains available to the SNES 65816 side while the FX3 processor accesses its own ROM image. The parallel-ROM path is straight pass-through: the SNES address lines drive the ROM address pins directly, and an optional second device uses A23 as the upper-chip select. ROMs are striped into the physical device image before programming so CPU reads never need a live address remap.
+The QSPI FX3 ROM is not the main SNES game ROM. The cartridge's normal parallel ROM remains available to the SNES 65816 side while the FX3 processor accesses its own ROM image. The parallel-ROM path is straight pass-through. The SNES address lines drive the ROM address pins directly, and an optional second device uses A23 to select the upper ROM. ROMs are striped into the physical device image before programming so CPU reads do not need a live address remap.
 
 ---
 
@@ -84,10 +88,10 @@ REFRESH | GPIO22
 `/PARD` | GPIO25
 `/PAWR` | GPIO26
 Internal SuperFX service select | GPIO27
-DATA_DIR | GPIO28
-`/BUS_OE` | GPIO29
-`/ROM0_OE` | GPIO30
-`/ROM1_OE` (optional) | GPIO31
+`/ROM0_OE` | GPIO28
+`/ROM1_OE` (optional) | GPIO29
+`/BUS_OE` | GPIO30
+DATA_DIR | GPIO31
 A16-A23 | GPIO32-GPIO39
 D0-D7 | GPIO40-GPIO47
 
@@ -100,7 +104,7 @@ GPIO27 is internal to the cartridge firmware and is not connected to the SNES ca
 ## Requirements
 
 * Raspberry Pi Pico SDK 2.3.0 or newer
-* ARM GCC toolchain with `arm-none-eabi-gcc`/`arm-none-eabi-g++`
+* ARM GCC toolchain with `arm-none-eabi-gcc` and `arm-none-eabi-g++`
 * CMake
 * Python 3 for the ROM image packing tools
 
@@ -119,7 +123,13 @@ cmake --build build -j"$(nproc)"
 
 The project uses C++17 and automatically selects the custom `snes_fx3` RP2350B board definition.
 
-Normal Pico SDK output files are generated under `build/`, including `superfx3.elf` and the additional flashable image formats.
+The main linked firmware output is:
+
+```text
+build/superfx3.elf
+```
+
+The ELF contains the linked firmware and symbols used for debugging. Because the project calls `pico_add_extra_outputs()`, the Pico SDK also generates the normal `.bin`, `.hex`, `.uf2`, map, and disassembly outputs. The raw `.bin` is used by the QSPI image packing tool below.
 
 ---
 
@@ -140,6 +150,12 @@ python3 src/tools/make_snes_rom_image.py \
 
 Each populated ROM may be 1, 2, 4, 8, 16, 32, or 64 Mbit. One ROM is the default. A second ROM is only required when the striped image needs the A23=1 half of the bus or cannot fit the selected single-device capacity. The tool reports the minimum device size that can hold the selected mapping.
 
+When ROM1 is populated, configure the firmware for two parallel ROMs:
+
+```bash
+cmake -S . -B build -DSNES_PARALLEL_ROM_COUNT=2
+```
+
 Supported map names are `lorom`, `hirom`, `exlorom`, `exhirom`, `superfx-extended`, and `raw`. LoROM and HiROM accept source images up to 4 MiB, ExLoROM and ExHiROM up to 8 MiB, and `superfx-extended` models the 11 MiB Snes9x extended SuperFX CPU map. `raw` accepts a prebuilt bus image up to the full 16 MiB / 128 Mbit physical ceiling. A 512-byte copier header is stripped automatically for mapped SNES ROMs.
 
 The output file matches the selected physical ROM capacity and unused locations are filled with `0xFF`. With `--rom-count 2`, ROM1 is written separately using the `--rom1-output` path or an automatically generated `.rom1` filename. Banks `$70-$71` are still intercepted by the cartridge firmware for the shared 128 KiB SRAM.
@@ -152,7 +168,9 @@ FX3 uses a private ROM image stored alongside the firmware in the RP2350's prima
 
 The current board definition uses 4 MiB of QSPI flash. The upper 3 MiB are reserved for the FX3 ROM, leaving the lower 1 MiB for firmware.
 
-A helper tool is included to combine the firmware and FX3 ROM into one raw flash image:
+The firmware build produces `superfx3.elf` as the linked firmware binary and `superfx3.bin` as a flat flash image. The QSPI packing step uses the `.bin` because the combined image is written as raw flash data.
+
+Create the combined QSPI image with:
 
 ```bash
 python3 src/tools/make_fx3_qspi_image.py \
@@ -168,13 +186,13 @@ The tool checks that:
 * The ROM partition is aligned to a 4 KiB flash sector
 * The firmware does not overlap the FX3 ROM partition
 
-Shorter FX3 ROM images are padded with `0xFF`.
+Unused space and shorter FX3 ROM images are padded with `0xFF`.
 
 ---
 
 # Testing
 
-The portable core and the host-testable RP2350 support code have a fairly extensive test suite.
+The portable core and the host-testable RP2350 support code have an extensive test suite.
 
 From the `src` directory:
 
@@ -204,7 +222,7 @@ Current coverage gates are:
 * Host-testable core, sync, and backend line coverage of at least 90%
 * Branch alternatives taken at least once of at least 75%
 
-The host tests are useful for catching processor and integration mistakes, but they are not a replacement for testing the actual SNES bus. PIO timing, GPIO behavior, DMA, interrupt latency, and cartridge electrical timing still need to be verified on real hardware.
+The current host/static test suite and coverage thresholds pass. These tests are useful for catching processor and integration mistakes, but they are not a replacement for testing the actual SNES bus. PIO timing, GPIO behavior, DMA, interrupt latency, and cartridge electrical timing still need to be verified on real hardware.
 
 ---
 
@@ -223,9 +241,7 @@ Path | Description
 
 # Current Status
 
-The software side is far enough along to build cleanly against the actual Pico SDK and ARM toolchain, and the host/static test suite currently passes.
-
-The next major step is hardware validation.
+The host/static suite is passing and the firmware build is set up for the Pico SDK and ARM toolchain. Hardware validation is still the next major step.
 
 Things still being worked through include:
 
@@ -245,7 +261,7 @@ Portions of the SuperFX processor implementation are based on the GSU implementa
 
 Special thanks to Randy Linden and kandowantu.
 
-Dedicated to Rebecca Heinemann and Jennel Jacquays.
+Dedicated to Rebecca Heineman and Jennell Jaquays.
 
 ---
 

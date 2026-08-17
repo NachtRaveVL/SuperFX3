@@ -437,11 +437,13 @@ bool fx_sync_reset() {
     fx_sync_lock_state();
 
     if (g_core1_owns_fx.load(std::memory_order_relaxed)) {
-        g_irq_clear_pending.store(true, std::memory_order_release);
-        if (g_backend.set_irq)
-            g_backend.set_irq(g_backend.context, false);
-
         const bool queued = fx_sync_queue_command(FxSyncCommandType::Reset);
+
+        if (queued) {
+            g_irq_clear_pending.store(true, std::memory_order_release);
+            if (g_backend.set_irq)
+                g_backend.set_irq(g_backend.context, false);
+        }
 
         fx_sync_unlock_state();
         return queued;

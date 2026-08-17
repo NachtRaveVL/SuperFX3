@@ -86,6 +86,21 @@ build_sync_tests() {
         -o "$BUILD/sync_tests"
 }
 
+
+build_bus_integration_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
+        tests/bus_integration_tests.cpp "${CORE_SOURCES[@]}" platform/rp2350/fx_sync.cpp \
+        platform/rp2350/snes_bus.cpp platform/rp2350/snes_pio.cpp \
+        -o "$BUILD/bus_integration_tests"
+}
+
+build_bus_integration_tests_dual_rom() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" -DSNES_PARALLEL_ROM_COUNT=2 "${PICO_INCLUDES[@]}" \
+        tests/bus_integration_tests.cpp "${CORE_SOURCES[@]}" platform/rp2350/fx_sync.cpp \
+        platform/rp2350/snes_bus.cpp platform/rp2350/snes_pio.cpp \
+        -o "$BUILD/bus_integration_tests_dual_rom"
+}
+
 build_fx_core_sanity() {
     "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
         tests/fx_core_sanity.cpp "${CORE_SOURCES[@]}" platform/rp2350/fx_backend.cpp \
@@ -122,6 +137,15 @@ run_stage "CXX core_tests" build_core_test core_tests
 run_stage "RUN core_tests" "$BUILD/core_tests"
 run_stage "CXX opcode_tests" build_core_test opcode_tests
 run_stage "RUN opcode_tests" "$BUILD/opcode_tests"
+
+echo
+echo "== Architectural integration tests =="
+run_stage "CXX architectural_tests" build_core_test architectural_tests
+run_stage "RUN architectural_tests" "$BUILD/architectural_tests"
+run_stage "CXX bus_integration_tests" build_bus_integration_tests
+run_stage "RUN bus_integration_tests" "$BUILD/bus_integration_tests"
+run_stage "CXX bus_integration dual-ROM" build_bus_integration_tests_dual_rom
+run_stage "RUN bus_integration dual-ROM" "$BUILD/bus_integration_tests_dual_rom"
 
 echo
 echo "== Synchronization tests =="
