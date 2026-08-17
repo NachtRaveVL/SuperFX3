@@ -1,0 +1,224 @@
+[
+  {
+    "id": "fx3_present",
+    "name": "CORE / FX3 PRESENT",
+    "kernel": null,
+    "setup": "NONE",
+    "validator": "VCR",
+    "flags": [
+      "CPU_ONLY"
+    ],
+    "timeout": 1,
+    "param0": 0,
+    "param1": 0,
+    "expected": 82
+  },
+  {
+    "id": "cpu_register",
+    "name": "CORE / CPU REGISTER",
+    "kernel": null,
+    "setup": "CPU_REG",
+    "validator": "CPU_REG",
+    "flags": [
+      "CPU_ONLY"
+    ],
+    "timeout": 1,
+    "param0": 0,
+    "param1": 0,
+    "expected": 48879
+  },
+  {
+    "id": "gsu_stop",
+    "name": "CORE / GSU STOP",
+    "kernel": "FxKernel_Stop",
+    "setup": "NONE",
+    "validator": "COMPLETE",
+    "flags": [],
+    "timeout": 120,
+    "param0": 0,
+    "param1": 0,
+    "expected": 0
+  },
+  {
+    "id": "repeat_stop",
+    "name": "CORE / START STOP X32",
+    "kernel": "FxKernel_Stop",
+    "setup": "NONE",
+    "validator": "COMPLETE",
+    "flags": [
+      "REPEAT"
+    ],
+    "timeout": 120,
+    "param0": 32,
+    "param1": 0,
+    "expected": 0
+  },
+  {
+    "id": "ram_magic",
+    "name": "MEMORY / RAM MAGIC",
+    "kernel": "FxKernel_RamMagic",
+    "setup": "RAM_MAGIC",
+    "validator": "RAM_MAGIC",
+    "flags": [],
+    "timeout": 120,
+    "param0": 0,
+    "param1": 0,
+    "expected": 42330
+  },
+  {
+    "id": "alu_add",
+    "name": "CORE / ALU ADD",
+    "kernel": "FxKernel_AluAdd",
+    "setup": "RAM_MAGIC",
+    "validator": "ALU",
+    "flags": [],
+    "timeout": 120,
+    "param0": 0,
+    "param1": 0,
+    "expected": 4677
+  },
+  {
+    "id": "rom_buffer",
+    "name": "MEMORY / ROM BUFFER",
+    "kernel": "FxKernel_RomBuffer",
+    "setup": "RAM_MAGIC",
+    "validator": "ROM",
+    "flags": [],
+    "timeout": 120,
+    "param0": 0,
+    "param1": 0,
+    "expected": 199
+  },
+  {
+    "id": "pipeline_mix",
+    "name": "ARCH / ROM ALU RAM STOP",
+    "kernel": "FxKernel_PipelineMix",
+    "setup": "RAM_MAGIC",
+    "validator": "PIPELINE",
+    "flags": [],
+    "timeout": 120,
+    "param0": 0,
+    "param1": 0,
+    "expected": 216
+  },
+  {
+    "id": "plot_pixel",
+    "name": "GRAPHICS / PLOT PIXEL",
+    "kernel": "FxKernel_PlotPixel",
+    "setup": "PLOT",
+    "validator": "PLOT",
+    "flags": [
+      "VISUAL"
+    ],
+    "timeout": 120,
+    "param0": 0,
+    "param1": 0,
+    "expected": 90
+  },
+  {
+    "id": "plot_tile_pattern",
+    "name": "GRAPHICS / PLOT 8X8 TILE",
+    "kernel": "FxKernel_PlotTilePattern",
+    "setup": "PLOT",
+    "validator": "PLOT_PATTERN",
+    "flags": [
+      "VISUAL"
+    ],
+    "timeout": 120,
+    "param0": 0,
+    "param1": 0,
+    "expected": 0
+  },
+  {
+    "id": "rpix_roundtrip",
+    "name": "GRAPHICS / RPIX ROUNDTRIP",
+    "kernel": "FxKernel_RpixRoundTrip",
+    "setup": "PLOT",
+    "validator": "RPIX",
+    "flags": [
+      "VISUAL"
+    ],
+    "timeout": 120,
+    "param0": 0,
+    "param1": 0,
+    "expected": 90
+  },
+  {
+    "id": "clear_a",
+    "name": "FX3 CMD / CLEAR A",
+    "kernel": "FxKernel_ClearA",
+    "setup": "CLEAR",
+    "validator": "CLEAR",
+    "flags": [
+      "VISUAL"
+    ],
+    "timeout": 120,
+    "param0": 0,
+    "param1": 8,
+    "expected": 0
+  },
+  {
+    "id": "clear_b",
+    "name": "FX3 CMD / CLEAR B",
+    "kernel": "FxKernel_ClearB",
+    "setup": "CLEAR",
+    "validator": "CLEAR",
+    "flags": [
+      "VISUAL"
+    ],
+    "timeout": 120,
+    "param0": 9,
+    "param1": 17,
+    "expected": 0
+  },
+  {
+    "id": "clear_c",
+    "name": "FX3 CMD / CLEAR C",
+    "kernel": "FxKernel_ClearC",
+    "setup": "CLEAR",
+    "validator": "CLEAR",
+    "flags": [
+      "VISUAL"
+    ],
+    "timeout": 120,
+    "param0": 18,
+    "param1": 26,
+    "expected": 0
+  },
+  {
+    "id": "c2p_a",
+    "name": "FX3 CMD / C2P A NOOP",
+    "kernel": "FxKernel_C2pA",
+    "setup": "C2P_NOOP",
+    "validator": "C2P_NOOP",
+    "flags": [],
+    "timeout": 120,
+    "param0": 0,
+    "param1": 0,
+    "expected": 0
+  },
+  {
+    "id": "c2p_b",
+    "name": "FX3 CMD / C2P B NOOP",
+    "kernel": "FxKernel_C2pB",
+    "setup": "C2P_NOOP",
+    "validator": "C2P_NOOP",
+    "flags": [],
+    "timeout": 120,
+    "param0": 0,
+    "param1": 0,
+    "expected": 0
+  },
+  {
+    "id": "c2p_c",
+    "name": "FX3 CMD / C2P C NOOP",
+    "kernel": "FxKernel_C2pC",
+    "setup": "C2P_NOOP",
+    "validator": "C2P_NOOP",
+    "flags": [],
+    "timeout": 120,
+    "param0": 0,
+    "param1": 0,
+    "expected": 0
+  }
+]

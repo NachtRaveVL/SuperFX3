@@ -106,7 +106,8 @@ GPIO27 is internal to the cartridge firmware and is not connected to the SNES ca
 * Raspberry Pi Pico SDK 2.3.0 or newer
 * ARM GCC toolchain with `arm-none-eabi-gcc` and `arm-none-eabi-g++`
 * CMake
-* Python 3 for the ROM image packing tools
+* Python 3 for the ROM image packing tools and diagnostic ROM build
+* cc65 with `ca65` and `ld65` when building the FX3 diagnostic ROM
 
 Set `PICO_SDK_PATH` to your Pico SDK installation if it is not already configured:
 
@@ -130,6 +131,38 @@ build/superfx3.elf
 ```
 
 The ELF contains the linked firmware and symbols used for debugging. Because the project calls `pico_add_extra_outputs()`, the Pico SDK also generates the normal `.bin`, `.hex`, `.uf2`, map, and disassembly outputs. The raw `.bin` is used by the QSPI image packing tool below.
+
+---
+
+# FX3 Diagnostic ROM
+
+The repository includes a hardware-facing SNES test application in `testrom/`. The 65816 owns the menu and validation while small GSU kernels exercise the FX3 implementation. This keeps the code doing the judging separate from the processor being tested.
+
+Build the two diagnostic ROM halves with:
+
+```bash
+python3 testrom/build.py
+```
+
+Or through the configured CMake tree:
+
+```bash
+cmake --build build --target fx3_testrom
+```
+
+The build produces a matched diagnostic set. `fx3_test.sfc` is the 65816 supervisor for the parallel SNES ROM. `fx3_test_fxrom.bin` is the compact linked GSU payload. `fx3_test_fxrom_partition.bin` is the same payload expanded to the full 3 MiB private FX3 QSPI partition with erased space filled by `0xFF`. `fx3_test_manifest.json` records SHA-256 hashes, sizes, the QSPI offset, linked GSU entry points, and a pair ID tying the SNES and FX images together.
+
+The first pass includes menu-driven and `RUN ALL` tests for register access, STOP, repeated START/STOP, shared RAM, ALU behavior, private ROM reads, an architectural ROM-to-ALU-to-RAM pipeline test, PLOT, a complete 8x8 PLOT tile, RPIX, all three CLEAR commands, and the current direct-to-planar C2P command behavior. Graphics tests are checked byte-for-byte in shared RAM before the result tile is copied to VRAM for visual inspection.
+
+Run the source/layout checks without cc65 with:
+
+```bash
+python3 testrom/build.py --check
+```
+
+The diagnostic source/build-helper checks and the normal host/static firmware suite pass in the current tree. A native `ca65`/`ld65` assembly/link still needs to be run on a workstation with cc65 installed before treating the generated `.sfc` and QSPI payload as hardware-ready.
+
+See `testrom/README.md` for the test ABI, programming-image options, validation status, and source layout.
 
 ---
 
@@ -261,7 +294,7 @@ Portions of the SuperFX processor implementation are based on the GSU implementa
 
 Special thanks to Randy Linden and kandowantu.
 
-Dedicated to Rebecca Heineman and Jennell Jaquays.
+Dedicated to Rebecca Ann Heineman and Jennell Allyn Jaquays.
 
 ---
 

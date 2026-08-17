@@ -130,6 +130,7 @@ echo "== Python/static tests =="
 run_stage "PIO static checks" python3 tests/pio_static_tests.py
 run_stage "QSPI image packer" python3 tests/packer_tests.py
 run_stage "SNES ROM bus image" python3 tests/snes_rom_image_tests.py
+run_stage "FX3 diagnostic ROM sources" python3 ../testrom/build.py --check --build-dir "$BUILD/testrom-check"
 
 echo
 echo "== Portable core tests =="

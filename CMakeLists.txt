@@ -90,3 +90,22 @@ target_link_libraries(superfx3 PRIVATE
 pico_enable_stdio_uart(superfx3 0)
 pico_enable_stdio_usb(superfx3 0)
 pico_add_extra_outputs(superfx3)
+# The diagnostic ROM is intentionally a separate target. Firmware-only builds do
+# not need cc65, while `fx3_testrom` gives us the 65816 supervisor and private GSU ROM.
+find_package(Python3 3 COMPONENTS Interpreter REQUIRED)
+add_custom_target(fx3_testrom
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/testrom/build.py
+            --build-dir ${CMAKE_BINARY_DIR}/testrom
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Building FX3 diagnostic ROM"
+    VERBATIM
+)
+
+add_custom_target(fx3_testrom_check
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/testrom/build.py
+            --check --build-dir ${CMAKE_BINARY_DIR}/testrom-check
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    COMMENT "Checking FX3 diagnostic ROM sources"
+    VERBATIM
+)
+

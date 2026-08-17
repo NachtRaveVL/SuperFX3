@@ -1,0 +1,32 @@
+; FX3 CPU-visible register window used by the RP2350 firmware.
+
+FX_R0   = $7000
+FX_R1   = $7002
+FX_R2   = $7004
+FX_R3   = $7006
+FX_R4   = $7008
+FX_R5   = $700A
+FX_R6   = $700C
+FX_R7   = $700E
+FX_R8   = $7010
+FX_R9   = $7012
+FX_R10  = $7014
+FX_R11  = $7016
+FX_R12  = $7018
+FX_R13  = $701A
+FX_R14  = $701C
+FX_R15  = $701E
+FX_SFR  = $7030
+FX_PBR  = $7034
+FX_CFGR = $7037
+FX_SCBR = $7038
+FX_CLSR = $7039
+FX_SCMR = $703A
+FX_VCR  = $703B
+FX_RAMBR = $703C
+
+FX3_VCR_VALUE = $52
+FX3_DEFAULT_SCBR = $40
+FX3_SCMR_8BPP = $03
+FX3_CFGR_TEST = $A0
+FX3_CLSR_FAST = $01
