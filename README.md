@@ -25,7 +25,6 @@ The firmware is now building cleanly with the real RP2350 toolchain and the comp
 * 4 MiB (32 Mbit) of flash storage on the RP2350 QSPI flash interface
   * 3 MiB reserved for GSU/FX program code and data
   * 1 MiB reserved for firmware (padded with `0xFF`)
-* Separate 1–16 MiB (8–128 Mbit) external parallel flash ROM for the SNES CPU
 * External parallel flash ROM for the SNES CPU, with one device by default and an optional second
   * Supports 1-64 Mbit devices, up to 128 Mbit total with two 64 Mbit ROMs
   * Supports LoROM, HiROM, ExLoROM, ExHiROM, extended SuperFX, and raw bus images
