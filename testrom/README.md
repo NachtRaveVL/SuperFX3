@@ -23,7 +23,7 @@ fx3_test_manifest.json
 
 `fx3_test_fxrom_partition.bin` is the programming-ready private FX3 ROM partition. It is exactly 3 MiB, starts with the linked payload, and fills the unused space with `0xFF`. With the current 4 MiB QSPI layout this partition belongs at flash offset `0x100000`. The build imports those layout values from `make_fx3_qspi_image.py` so the diagnostic tooling does not maintain a second copy of them.
 
-`fx3_test_manifest.json` records the SHA-256 and size of every artifact, the QSPI partition offset, each linked GSU entry point, and a pair ID calculated from the SNES supervisor plus the programming-ready FX partition. That gives us a simple way to catch a mismatched `.sfc` and GSU image at the bench.
+`fx3_test_manifest.json` records the SHA-256 and size of every artifact, the QSPI partition offset, each linked GSU entry point, and a pair ID calculated from the SNES supervisor plus the programming-ready FX partition. This provides a simple way to catch a mismatched `.sfc` and GSU image at the bench.
 
 The build links the GSU image first and generates `fx_entries.inc` from its symbol file. The 65816 supervisor then consumes those generated entry points. GSU routines can move around without hand-maintained addresses in the SNES program. The binaries stay separate, so GSU work can be reflashed in the private QSPI partition without changing the parallel ROM when the supervisor itself has not changed.
 
@@ -77,7 +77,7 @@ That uses the same QSPI image packer as the rest of the project.
 
 `tests.json` is the test registry. Each entry names a GSU kernel, setup operation, validator, timeout, and optional parameters. The menu and `RUN ALL` path use the same registry.
 
-Current test families include:
+The first pass contains these test families:
 
 * FX3 presence and CPU-visible register access
 * GSU STOP and repeated START/STOP
@@ -93,6 +93,13 @@ Current test families include:
 
 Visual tests also copy an actual 8bpp tile from bank `$71` into SNES VRAM. The BG1 map is blank everywhere except for one visual-result tile, so test data cannot repeat across the whole screen. TIMEOUT results keep BG1 hidden because the output buffer may still contain setup sentinels rather than a meaningful result. The screen is therefore useful to a human, but the screen is not the oracle. The 65816 checks the shared RAM bytes first.
 
+The UI uses a small HDMA backdrop effect that does not consume another BG layer. BG2 text and BG1 visual results keep their normal palette colors. Only the black backdrop participates in fixed-color addition.
+
+The normal menu and running screens use a dark blue vertical gradient. Individual result screens switch the gradient based on the result: dark green for PASS, dark red for FAIL, and dark amber for TIMEOUT. The RUN ALL summary uses green when everything passes, red when any test fails, and amber when there are timeouts but no failures.
+
+HDMA channels 5, 6, and 7 update the red, green, and blue components of `$2132` independently across the 224 visible scanlines. Channel 0 remains available for the existing VRAM DMA routines. `tools/gen_background.py` generates all four gradient themes. The background does not animate over time. Theme changes happen only when the UI state changes.
+
+## Shared Test ABI
 ## Source Tree
 
 ```text
@@ -109,7 +116,7 @@ The local `fx/gsu.inc` only defines the small instruction subset the current tes
 
 ## Reference Projects
 
-UltraStarFox and UltraStarFox2 are useful references for how real Star Fox codebases keep 65816 code, MARIO code, includes, fonts, data, and tools separated. We are borrowing that organizational lesson without carrying their ARGSFX and DOSBox build requirements into this project.
+UltraStarFox and UltraStarFox2 are useful references for how real Star Fox codebases keep 65816 code, MARIO code, includes, fonts, data, and tools separated. That organizational separation is retained without carrying the ARGSFX and DOSBox build requirements into this project.
 
 * https://github.com/Sunlitspace542/ultrastarfox
 * https://github.com/Sunlitspace542/ultrastarfox2

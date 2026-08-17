@@ -106,7 +106,6 @@ void snes_bus_init() {
     gpio_pull_up(SNES_WR_N_PIN);
     gpio_pull_up(SNES_ROMSEL_N_PIN);
     gpio_pull_up(SNES_RESET_N_PIN);
-    gpio_pull_up(SNES_WRAMSEL_N_PIN);
     gpio_pull_up(SNES_PARD_N_PIN);
     gpio_pull_up(SNES_PAWR_N_PIN);
 

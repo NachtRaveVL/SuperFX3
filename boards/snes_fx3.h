@@ -78,19 +78,23 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 
 // --- SNES CONTROL BUS ---
 
-// GPIO16-GPIO26 carry the SNES cartridge control signals used by this board.
-#define SNES_SYSTEM_CLK_PIN 16
-#define SNES_CPU_CLOCK_PIN  17
-#define SNES_RD_N_PIN       18
-#define SNES_WR_N_PIN       19
-#define SNES_CART_N_PIN     20
-#define SNES_RESET_N_PIN    21
-#define SNES_REFRESH_PIN    22
-#define SNES_WRAMSEL_N_PIN  23
-#define SNES_IRQ_N_PIN      24
-#define SNES_PARD_N_PIN     25
-#define SNES_PAWR_N_PIN     26
+// GPIO16-GPIO18 are intentionally left unused. Keeping these upper-left
+// package pins free shifts the cartridge control routing toward the bottom
+// edge of the RP2350B and the control-bus level shifter.
 
+// Optional 5A22 memory-cycle clock. Reserved for future timing work.
+#define SNES_SYSCK_PIN     19
+
+// Primary SNES cartridge control inputs.
+#define SNES_RD_N_PIN      20
+#define SNES_WR_N_PIN      21
+#define SNES_CART_N_PIN    22
+#define SNES_RESET_N_PIN   23
+
+// Legacy GSU1/GSU2 signals. FX3 does not require these signals.
+#define SNES_IRQ_N_PIN     24
+#define SNES_PARD_N_PIN    25
+#define SNES_PAWR_N_PIN    26
 
 // /CART is the SNES cartridge ROM select signal.
 #define SNES_ROMSEL_N_PIN SNES_CART_N_PIN
@@ -111,18 +115,12 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 // and PIO1/PIO2 use it to select SuperFX register transactions.
 #define SNES_SERVICE_SEL_PIN 27
 
-// GPIO28-GPIO31 keep the transceiver controls and ROM enables in adjacent physical pairs.
-// External data-bus transceiver direction.
-#define SNES_DATA_DIR_PIN 28
-
-// Global address/data bus transceiver output-enable, active low.
-#define SNES_BUS_OE_N_PIN 29
-
-// Primary cartridge ROM output-enable, active low.
-#define SNES_ROM0_OE_N_PIN 30
-
-// Optional upper cartridge ROM output-enable, active low.
-#define SNES_ROM1_OE_N_PIN 31
+// GPIO28-GPIO31 are ordered for PCB routing. The ROM output-enables stay
+// together, followed by the two control signals routed to the bus shifters.
+#define SNES_ROM0_OE_N_PIN 28
+#define SNES_ROM1_OE_N_PIN 29
+#define SNES_BUS_OE_N_PIN  30
+#define SNES_DATA_DIR_PIN  31
 
 // --- BOARD SIGNAL POLARITY ---
 
@@ -150,14 +148,11 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 #define SNES_ADDR_MASK    (SNES_ADDR_LO_MASK | SNES_ADDR_HI_MASK)
 #define SNES_DATA_MASK    0x0000FF0000000000ULL
 
-#define SNES_SYSTEM_CLK_MASK (1ULL << SNES_SYSTEM_CLK_PIN)
-#define SNES_CPU_CLOCK_MASK  (1ULL << SNES_CPU_CLOCK_PIN)
+#define SNES_SYSCK_MASK      (1ULL << SNES_SYSCK_PIN)
 #define SNES_RD_N_MASK       (1ULL << SNES_RD_N_PIN)
 #define SNES_WR_N_MASK       (1ULL << SNES_WR_N_PIN)
 #define SNES_CART_N_MASK     (1ULL << SNES_CART_N_PIN)
 #define SNES_RESET_N_MASK    (1ULL << SNES_RESET_N_PIN)
-#define SNES_REFRESH_MASK    (1ULL << SNES_REFRESH_PIN)
-#define SNES_WRAMSEL_N_MASK  (1ULL << SNES_WRAMSEL_N_PIN)
 #define SNES_IRQ_N_MASK      (1ULL << SNES_IRQ_N_PIN)
 #define SNES_PARD_N_MASK     (1ULL << SNES_PARD_N_PIN)
 #define SNES_PAWR_N_MASK     (1ULL << SNES_PAWR_N_PIN)
@@ -189,13 +184,16 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 #define SNES_CAPTURE_DATA_SHIFT    8
 #define SNES_CAPTURE_ADDR_LO_SHIFT 16
 
-// PIO side-set group:
-//   side-set 0 = DATA_DIR
-//   side-set 1 = /BUS_OE
-//   side-set 2 = /ROM0_OE
-// /ROM1_OE is driven separately through the read SM SET pin when ROM1 is populated.
-#define SNES_PIO_SIDESET_BASE  SNES_DATA_DIR_PIN
-#define SNES_PIO_SIDESET_COUNT 3
+// PIO read-control mapping:
+//   SET pin      = /ROM0_OE (GPIO28)
+//   side-set 0   = /ROM1_OE (GPIO29)
+//   side-set 1   = /BUS_OE  (GPIO30)
+//   side-set 2   = DATA_DIR (GPIO31)
+// This keeps the two ROM enables adjacent and the two shifter controls adjacent.
+#define SNES_PIO_SET_BASE       SNES_ROM0_OE_N_PIN
+#define SNES_PIO_SET_COUNT      1
+#define SNES_PIO_SIDESET_BASE   SNES_ROM1_OE_N_PIN
+#define SNES_PIO_SIDESET_COUNT  3
 
 // --- FLASH ---
 

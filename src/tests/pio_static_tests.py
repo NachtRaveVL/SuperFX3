@@ -104,6 +104,7 @@ def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x
     y = 0
     isr = 0
     osr = 0
+    rom0_enabled = False
     pc = program.wrap_target
 
     for _ in range(128):
@@ -149,9 +150,10 @@ def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x
             y = int(op.rsplit(" ", 1)[1], 0)
         elif op.startswith("set pins, "):
             value = int(op.rsplit(" ", 1)[1], 0)
-            if side == 5 and value == 0:
-                return "direct_rom1"
-            return f"set:{value}"
+            rom0_enabled = value == 0
+            if program.labels.get("read_fx3_loop") is None and program.labels.get("read_gsu_loop") is None and \
+                    program.labels.get("read_fx3_dual_loop") is None and program.labels.get("read_gsu_dual_loop") is None:
+                return f"set:{value}"
         elif op == "pull block":
             osr = pull_word & 0xFFFFFFFF
         elif op == "push block":
@@ -168,11 +170,13 @@ def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x
             polarity, pin = int(match.group(1)), int(match.group(2))
             if polarity == 0:
                 continue
-            if pin == 19:
+            if pin == 21:
                 return "ignore"
-            if pin == 18:
-                if side == 1:
+            if pin == 20:
+                if rom0_enabled:
                     return "direct_rom0"
+                if side == 4:
+                    return "direct_rom1"
                 return "read_complete"
             continue
         elif op.startswith("jmp "):
@@ -195,7 +199,7 @@ def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x
                 target = body.strip()
             if take:
                 if target in program.labels:
-                    if side == 4 and program.labels[target] == program.wrap_target:
+                    if side == 1 and program.labels[target] == program.wrap_target:
                         return "no_drive"
                     pc = program.labels[target]
                 else:
@@ -249,7 +253,7 @@ def test_source_driven_routes(pio_text: str) -> None:
                     for page in range(16):
                         selector = page == 7 if fx3 else page in (3, 6, 7)
                         for romsel_n in (0, 1):
-                            pin_window = romsel_n | (int(selector) << 11) | (bank << 12)
+                            pin_window = romsel_n | (int(selector) << 5) | (bank << 10)
                             initial_x = 56 if fx3 else int(blocked)
                             actual = pio_route(program, pin_window, selector, initial_x=initial_x)
 
@@ -490,7 +494,7 @@ def test_cpp_pio_setup() -> None:
         "sm_config_set_in_pins(&g_write_config, SNES_PIO_ADDR_DATA_BASE)",
         "sm_config_set_in_pins(&g_read_config, SNES_ROMSEL_N_PIN)",
         "sm_config_set_out_pins(&g_read_config, SNES_DATA_BASE, SNES_DATA_COUNT)",
-        "sm_config_set_set_pins(&g_read_config, SNES_ROM1_OE_N_PIN, 1)",
+        "sm_config_set_set_pins(&g_read_config, SNES_PIO_SET_BASE, SNES_PIO_SET_COUNT)",
         "sm_config_set_sideset_pins(&g_read_config, SNES_PIO_SIDESET_BASE)",
         "sm_config_set_jmp_pin(&g_read_config, SNES_SERVICE_SEL_PIN)",
         "snes_read_fx3_dual_program", "snes_read_gsu_dual_program",
@@ -508,14 +512,22 @@ def test_cpp_pio_setup() -> None:
     pin_tokens = [
         "#define SNES_ADDR_LO_BASE  0",
         "#define SNES_CONTROL_BASE  16",
+        "#define SNES_SYSCK_PIN     19",
+        "#define SNES_RD_N_PIN      20",
+        "#define SNES_WR_N_PIN      21",
+        "#define SNES_CART_N_PIN    22",
+        "#define SNES_RESET_N_PIN   23",
+        "#define SNES_IRQ_N_PIN     24",
+        "#define SNES_PARD_N_PIN    25",
+        "#define SNES_PAWR_N_PIN    26",
         "#define SNES_SERVICE_SEL_PIN 27",
-        "#define SNES_DATA_DIR_PIN 28",
-        "#define SNES_BUS_OE_N_PIN 29",
-        "#define SNES_ROM0_OE_N_PIN 30",
-        "#define SNES_ROM1_OE_N_PIN 31",
+        "#define SNES_ROM0_OE_N_PIN 28",
+        "#define SNES_ROM1_OE_N_PIN 29",
+        "#define SNES_BUS_OE_N_PIN  30",
+        "#define SNES_DATA_DIR_PIN  31",
         "#define SNES_ADDR_HI_BASE  32",
         "#define SNES_DATA_BASE  40",
-        "#define SNES_PIO_SIDESET_COUNT 3",
+        "#define SNES_PIO_SIDESET_COUNT  3",
         "pico_board_cmake_set(PICO_PLATFORM, rp2350)",
         "#define PICO_RP2350A 0",
         "pico_board_cmake_set_default(PICO_FLASH_SIZE_BYTES, (4 * 1024 * 1024))",
@@ -524,11 +536,36 @@ def test_cpp_pio_setup() -> None:
         if token not in board:
             fail(f"SNES board definition is missing {token}")
 
+    control_pin_defs = {
+        (match.group(1), int(match.group(2)))
+        for match in re.finditer(r"^#define\s+(SNES_[A-Z0-9_]+_PIN)\s+(\d+)\s*$", board, re.MULTILINE)
+        if 16 <= int(match.group(2)) <= 31
+    }
+    expected_control_pin_defs = {
+        ("SNES_SYSCK_PIN", 19), ("SNES_RD_N_PIN", 20), ("SNES_WR_N_PIN", 21),
+        ("SNES_CART_N_PIN", 22), ("SNES_RESET_N_PIN", 23), ("SNES_IRQ_N_PIN", 24),
+        ("SNES_PARD_N_PIN", 25), ("SNES_PAWR_N_PIN", 26), ("SNES_SERVICE_SEL_PIN", 27),
+        ("SNES_ROM0_OE_N_PIN", 28), ("SNES_ROM1_OE_N_PIN", 29),
+        ("SNES_BUS_OE_N_PIN", 30), ("SNES_DATA_DIR_PIN", 31),
+    }
+    if control_pin_defs != expected_control_pin_defs:
+        fail(f"unexpected GPIO16-GPIO31 control map: {sorted(control_pin_defs)}")
+
+    required_layout = [
+        "#define SNES_PIO_SET_BASE       SNES_ROM0_OE_N_PIN",
+        "#define SNES_PIO_SET_COUNT      1",
+        "#define SNES_PIO_SIDESET_BASE   SNES_ROM1_OE_N_PIN",
+        "#define SNES_PIO_SIDESET_COUNT  3",
+    ]
+    for token in required_layout:
+        if token not in board:
+            fail(f"SNES PIO control mapping is missing {token}")
+
     ordered_controls = [
-        "#define SNES_DATA_DIR_PIN 28",
-        "#define SNES_BUS_OE_N_PIN 29",
-        "#define SNES_ROM0_OE_N_PIN 30",
-        "#define SNES_ROM1_OE_N_PIN 31",
+        "#define SNES_ROM0_OE_N_PIN 28",
+        "#define SNES_ROM1_OE_N_PIN 29",
+        "#define SNES_BUS_OE_N_PIN  30",
+        "#define SNES_DATA_DIR_PIN  31",
     ]
     positions = [board.index(token) for token in ordered_controls]
     if positions != sorted(positions):
@@ -546,14 +583,22 @@ def test_listening_state(pio_text: str) -> None:
     pio_cpp = PIO_CPP.read_text()
 
     required_board = [
+        "#define SNES_SYSCK_PIN     19",
+        "#define SNES_RD_N_PIN      20",
+        "#define SNES_WR_N_PIN      21",
+        "#define SNES_CART_N_PIN    22",
+        "#define SNES_RESET_N_PIN   23",
+        "#define SNES_IRQ_N_PIN     24",
+        "#define SNES_PARD_N_PIN    25",
+        "#define SNES_PAWR_N_PIN    26",
         "#define SNES_SERVICE_SEL_PIN 27",
-        "#define SNES_DATA_DIR_PIN 28",
-        "#define SNES_BUS_OE_N_PIN 29",
-        "#define SNES_ROM0_OE_N_PIN 30",
-        "#define SNES_ROM1_OE_N_PIN 31",
+        "#define SNES_ROM0_OE_N_PIN 28",
+        "#define SNES_ROM1_OE_N_PIN 29",
+        "#define SNES_BUS_OE_N_PIN  30",
+        "#define SNES_DATA_DIR_PIN  31",
         "#define SNES_BUS_ENABLE  0",
         "#define SNES_BUS_DISABLE 1",
-        "#define SNES_PIO_SIDESET_COUNT 3",
+        "#define SNES_PIO_SIDESET_COUNT  3",
     ]
     for token in required_board:
         if token not in board:
@@ -579,15 +624,18 @@ def test_listening_state(pio_text: str) -> None:
         "SNES_ROM_DISABLE) << SNES_ROM1_OE_N_PIN",
         "pio_gpio_init(pio2, SNES_ROM0_OE_N_PIN);",
         "pio_gpio_init(pio2, SNES_ROM1_OE_N_PIN);",
+        "sm_config_set_set_pins(&g_read_config, SNES_PIO_SET_BASE, SNES_PIO_SET_COUNT)",
     ]
     for token in required_pause_resume:
         if token not in pio_cpp:
             fail(f"PIO pause/resume no longer restores the complete listening state: {token}")
 
-    if ";   bit0 DATA_DIR, bit1 /BUS_OE, bit2 /ROM0_OE" not in pio_text:
-        fail("PIO side-set documentation no longer matches the global-BUS_OE layout")
-    if "Optional /ROM1_OE on GPIO31 is controlled through the read SM SET pin." not in pio_text:
-        fail("PIO source no longer documents the separate optional ROM1 enable")
+    if ";   GPIO28 /ROM0_OE  (SET pin)" not in pio_text:
+        fail("PIO source no longer documents ROM0 on the SET pin")
+    if ";   GPIO29 /ROM1_OE  (side-set bit0)" not in pio_text:
+        fail("PIO source no longer documents ROM1 in the side-set group")
+    if ";   GPIO30 /BUS_OE   (side-set bit1)" not in pio_text or ";   GPIO31 DATA_DIR  (side-set bit2)" not in pio_text:
+        fail("PIO side-set documentation no longer matches the shifter-control layout")
 
     single_names = ("snes_read_fx3", "snes_read_gsu")
     dual_names = ("snes_read_fx3_dual", "snes_read_gsu_dual")
@@ -596,40 +644,31 @@ def test_listening_state(pio_text: str) -> None:
     for name in single_names + dual_names:
         program = source[name]
         raw = "\n".join(program.instructions)
-        if "wait 1 gpio 18 side 1 [3]" not in raw:
-            fail(f"{name} ROM0 path no longer holds data after /RD rises")
-        if "wait 1 gpio 18 side 5 [3]" not in raw:
-            fail(f"{name} CPU/read-turnaround path no longer holds outward direction after /RD rises")
+        if "wait 1 gpio 20 side 5 [3]" not in raw:
+            fail(f"{name} no longer holds DATA_DIR outward after /RD rises")
         if "side 7" in raw:
             fail(f"{name} must not disable BUS_OE during a normal SNES read")
         if "irq 0 side 5" not in raw or "pull block side 5" not in raw:
             fail(f"{name} CPU-read path no longer changes DATA_DIR before firmware drive")
+        if "set pins, 0 side 5" not in raw or "set pins, 1 side 5 [3]" not in raw:
+            fail(f"{name} no longer controls ROM0 through the dedicated SET pin")
+
+        first_outward = raw.find("side 5")
+        first_rom0 = raw.find("set pins, 0 side 5")
+        if first_outward < 0 or first_rom0 < 0 or first_outward > first_rom0:
+            fail(f"{name} no longer establishes DATA_DIR before asserting ROM0 /OE")
 
     for name in single_names:
         raw = "\n".join(source[name].instructions)
-        if "set pins, 0" in raw:
+        if "side 4" in raw:
             fail(f"{name} must never enable optional ROM1 in the default single-ROM build")
 
     for name in dual_names:
         raw = "\n".join(source[name].instructions)
-        if "set pins, 0 side 5" not in raw:
-            fail(f"{name} no longer asserts ROM1 only after DATA_DIR is outward")
-        if "set pins, 1 side 5 [3]" not in raw:
+        if "wait 1 gpio 20 side 4 [3]" not in raw:
+            fail(f"{name} no longer enables ROM1 only while DATA_DIR is outward")
+        if "side 5 [3]" not in raw:
             fail(f"{name} no longer disables ROM1 before restoring the listening direction")
-
-    for name in ("snes_read_fx3", "snes_read_fx3_dual"):
-        raw = "\n".join(source[name].instructions)
-        first_outward = raw.find("side 5")
-        first_rom0 = raw.find("side 1")
-        if first_outward < 0 or first_rom0 < 0 or first_outward >= first_rom0:
-            fail(f"{name} no longer establishes DATA_DIR before asserting ROM0 /OE")
-
-    for name in ("snes_read_gsu", "snes_read_gsu_dual"):
-        raw = "\n".join(source[name].instructions)
-        first_outward = raw.find("side 5")
-        first_rom0 = raw.find("side 1")
-        if first_outward < 0 or first_rom0 < 0 or first_outward >= first_rom0:
-            fail(f"{name} no longer establishes DATA_DIR before asserting ROM0 /OE")
 
 def test_irq_contract(pio_text: str) -> None:
     required_pio = ["irq wait 1", "irq 2", "irq 0 side 5"]

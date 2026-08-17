@@ -510,7 +510,7 @@ void snes_pio_start(SuperFx& fx) {
 
     sm_config_set_in_pins(&g_read_config, SNES_ROMSEL_N_PIN);
     sm_config_set_out_pins(&g_read_config, SNES_DATA_BASE, SNES_DATA_COUNT);
-    sm_config_set_set_pins(&g_read_config, SNES_ROM1_OE_N_PIN, 1);
+    sm_config_set_set_pins(&g_read_config, SNES_PIO_SET_BASE, SNES_PIO_SET_COUNT);
     sm_config_set_sideset_pins(&g_read_config, SNES_PIO_SIDESET_BASE);
     sm_config_set_jmp_pin(&g_read_config, SNES_SERVICE_SEL_PIN);
     sm_config_set_in_shift(&g_read_config, false, false, 32);
