@@ -1,0 +1,86 @@
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+SuperFx	KEYWORD1
+FxBackend	KEYWORD1
+FxConfig	KEYWORD1
+FxFlags	KEYWORD1
+FxPixelCache	KEYWORD1
+FxState	KEYWORD1
+FxChip	KEYWORD1
+FxTiming	KEYWORD1
+Rp2350FxBackendContext	KEYWORD1
+
+#######################################
+# SuperFx public API (KEYWORD2)
+#######################################
+
+init	KEYWORD2
+reset	KEYWORD2
+run	KEYWORD2
+run_accurate	KEYWORD2
+run_unlimited	KEYWORD2
+execute	KEYWORD2
+cpu_read	KEYWORD2
+cpu_write	KEYWORD2
+cpu_rom_read	KEYWORD2
+cpu_ram_read	KEYWORD2
+cpu_ram_write	KEYWORD2
+rom_access_allowed	KEYWORD2
+ram_access_allowed	KEYWORD2
+blocked_rom_value	KEYWORD2
+gsu_rom_offset	KEYWORD2
+running	KEYWORD2
+state	KEYWORD2
+config	KEYWORD2
+
+#######################################
+# RP2350B backend and bus API (KEYWORD2)
+#######################################
+
+fx3_qspi_rom_init	KEYWORD2
+fx3_qspi_rom_read	KEYWORD2
+fx_backend_create	KEYWORD2
+fx_sync_init	KEYWORD2
+fx_sync_core1_service	KEYWORD2
+fx_sync_cpu_read	KEYWORD2
+fx_sync_cpu_write	KEYWORD2
+fx_sync_cpu_ram_read	KEYWORD2
+fx_sync_cpu_ram_write	KEYWORD2
+fx_sync_rom_access_allowed	KEYWORD2
+fx_sync_ram_access_allowed	KEYWORD2
+fx_sync_blocked_rom_value	KEYWORD2
+fx_sync_reset	KEYWORD2
+snes_bus_init	KEYWORD2
+snes_bus_start	KEYWORD2
+snes_bus_service	KEYWORD2
+snes_rom_read	KEYWORD2
+snes_irq_write	KEYWORD2
+snes_pio_start	KEYWORD2
+snes_pio_pause	KEYWORD2
+snes_pio_resume	KEYWORD2
+snes_pio_request_rom_ownership	KEYWORD2
+snes_pio_sync_rom_ownership	KEYWORD2
+snes_pio_reset_pending	KEYWORD2
+snes_pio_clear_reset	KEYWORD2
+
+#######################################
+# Configuration and constants (LITERAL1)
+#######################################
+
+GSU1	LITERAL1
+GSU2	LITERAL1
+FX3	LITERAL1
+Accurate	LITERAL1
+Unlimited	LITERAL1
+fx1_config	LITERAL1
+fx2_config	LITERAL1
+fx3_config	LITERAL1
+RAM_BANK_SIZE	LITERAL1
+PLANAR_BASE	LITERAL1
+X_TILES	LITERAL1
+Y_TILES	LITERAL1
+FRAMEBUFFER_WIDTH	LITERAL1
+FRAMEBUFFER_HEIGHT	LITERAL1
+PLANAR_Y_TILE_STRIDE	LITERAL1

@@ -1,0 +1,37 @@
+{
+    "$schema": "https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/schema/library.json",
+    "name": "SuperFX3",
+    "version": "0.9.0",
+    "description": "SuperFX3 firmware and Super FX / GSU processor implementation for RP2350B-based SNES cartridges.",
+    "keywords": [
+        "snes",
+        "super-nintendo",
+        "superfx",
+        "superfx3",
+        "gsu",
+        "gsu1",
+        "gsu2",
+        "rp2350",
+        "rp2350b",
+        "pico-sdk",
+        "cartridge",
+        "firmware"
+    ],
+    "homepage": "https://github.com/NachtRaveVL/SuperFX3",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/NachtRaveVL/SuperFX3.git"
+    },
+    "authors": [
+        {
+            "name": "NachtRaveVL",
+            "email": "nachtravevl@gmail.com",
+            "url": "https://github.com/NachtRaveVL",
+            "maintainer": true
+        }
+    ],
+    "license": "GPL-3.0-or-later",
+    "headers": [
+        "fx/fx_core.h"
+    ]
+}
