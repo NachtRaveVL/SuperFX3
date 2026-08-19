@@ -1,65 +1,36 @@
-# Compiler output
-*.d
+# Build output
+build/
+build-*/
+.pio/
+CMakeFiles/
+Testing/
+wiki/
+
+# Compiled files
 *.o
-*.obj
 *.a
 *.elf
-*.uf2
 *.hex
+*.bin
+*.uf2
 *.map
-*.pyc
-
-# Precompiled headers
-*.gch
-*.pch
-
-# Debug information
-*.dwo
-*.pdb
-
-# Build directories
-build/
-Build/
-build-*/
 generated/
-picoasm/
-picoasm-install/
-pico-sdk/
 
-# CMake
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-install_manifest.txt
-compile_commands.json
-Makefile
-
-# Ninja
-build.ninja
-rules.ninja
-.ninja_deps
-.ninja_log
-
-# CMake local/user configuration
-CMakeUserPresets.json
-
-# Test output and caches
-Testing/
-.cache/
-
-# Temporary/editor files
-*.tmp
-*.log
-*.bak
-*.swp
-*~
-
-# Package managers
-vcpkg_installed/
-
-# IDEs
+# IDE files
 .vscode/
+.vs/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
 
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Temporary files
+*.log
+*.tmp
+*.bak
+*~
