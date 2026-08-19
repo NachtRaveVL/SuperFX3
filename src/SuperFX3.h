@@ -13,3 +13,6 @@
 #pragma once
 
 #include "fx/fx_core.h"
+#include "platform/rp2350/snes_bus.h"
+#include "platform/rp2350/fx_backend.h"
+#include "platform/rp2350/fx_sync.h"
