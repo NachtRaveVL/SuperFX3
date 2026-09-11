@@ -1,7 +1,7 @@
 {
     "$schema": "https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/schema/library.json",
     "name": "SuperFX3",
-    "version": "0.9.0",
+    "version": "0.9.1",
     "description": "SuperFX3 firmware and Super FX / GSU processor implementation for RP2350B-based SNES cartridges.",
     "keywords": [
         "snes",
