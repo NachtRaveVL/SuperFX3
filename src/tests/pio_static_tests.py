@@ -96,7 +96,7 @@ def parse_source_programs(text: str) -> dict[str, PioSourceProgram]:
     finish()
     return programs
 
-def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x: int = 0, pull_word: int = 0) -> str:
+def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x: int = 0, pull_word: int = 0, service_word: int | None = None) -> str:
     # Minimal source-level interpreter for the instruction subset used by the bus routers.
     # It intentionally stops at the first externally visible outcome instead of pretending
     # to model PIO timing, FIFOs, IRQ latency, or electrical behavior.
@@ -105,6 +105,10 @@ def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x
     isr = 0
     osr = 0
     rom0_enabled = False
+    service_started = False
+    data_dirs = 0
+    data_pins = 0
+    outward = False
     pc = program.wrap_target
 
     for _ in range(128):
@@ -113,8 +117,14 @@ def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x
         side_match = re.search(r"\bside\s+(\d+)", raw)
         side = int(side_match.group(1)) if side_match else None
         pc += 1
+        if side is not None and side & 4:
+            outward = True
+            if service_word == 0:
+                fail("rejected read changed the transceiver to output")
 
-        if op == "mov isr, null":
+        if op == "nop":
+            pass
+        elif op == "mov isr, null":
             isr = 0
         elif op == "mov x, isr":
             x = isr
@@ -142,7 +152,11 @@ def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x
                 x = value
             elif target == "y":
                 y = value
-            elif target not in ("null", "pins", "pindirs"):
+            elif target == "pindirs":
+                data_dirs = value
+            elif target == "pins":
+                data_pins = value
+            elif target != "null":
                 fail(f"source interpreter does not support OUT target {target}")
         elif op.startswith("set x, "):
             x = int(op.rsplit(" ", 1)[1], 0)
@@ -155,14 +169,18 @@ def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x
                     program.labels.get("read_fx3_dual_loop") is None and program.labels.get("read_gsu_dual_loop") is None:
                 return f"set:{value}"
         elif op == "pull block":
-            osr = pull_word & 0xFFFFFFFF
+            osr = (service_word if service_started and service_word is not None else pull_word) & 0xFFFFFFFF
         elif op == "push block":
             pass
         elif op.startswith("irq "):
             if op.startswith("irq wait 1"):
                 return "service"
             if op.startswith("irq 0"):
-                return "service"
+                if outward:
+                    fail("CPU read drove the transceiver before qualifying the address")
+                if service_word is None:
+                    return "service"
+                service_started = True
         elif op.startswith("wait "):
             match = re.match(r"wait\s+([01])\s+gpio\s+(\d+)", op)
             if not match:
@@ -177,6 +195,13 @@ def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x
                     return "direct_rom0"
                 if side == 4:
                     return "direct_rom1"
+                if service_started:
+                    expected_drive = bool(service_word and service_word & 1)
+                    if bool(data_dirs) != expected_drive:
+                        fail("read response drive bit disagrees with data pin directions")
+                    if expected_drive and data_pins != (service_word >> 1) & 0xFF:
+                        fail("read response shifted the wrong data byte onto D0-D7")
+                    return "driven_read" if expected_drive else "ignored_read"
                 return "read_complete"
             continue
         elif op.startswith("jmp "):
@@ -254,7 +279,7 @@ def test_source_driven_routes(pio_text: str) -> None:
                         selector = page == 7 if fx3 else page in (3, 6, 7)
                         for romsel_n in (0, 1):
                             pin_window = romsel_n | (int(selector) << 5) | (bank << 10)
-                            initial_x = 56 if fx3 else int(blocked)
+                            initial_x = 0 if blocked else 56
                             actual = pio_route(program, pin_window, selector, initial_x=initial_x)
 
                             if romsel_n:
@@ -279,6 +304,24 @@ def test_source_driven_routes(pio_text: str) -> None:
                                     f"${bank:02X}:{page:X}000 ROMSEL={romsel_n} blocked={blocked}: "
                                     f"{actual}, expected {expected}"
                                 )
+
+
+def test_read_drive_qualification(pio_text: str) -> None:
+    programs = parse_source_programs(pio_text)
+    for fx3 in (False, True):
+        for dual in (False, True):
+            name = f"snes_read_{'fx3' if fx3 else 'gsu'}{'_dual' if dual else ''}"
+            # Coarse selector is high for a WRAM address with the same low page
+            # as cartridge MMIO. Core 0 rejects it with a zero response word.
+            actual = pio_route(programs[name], 1 | (0x7E << 10), True,
+                               initial_x=56, service_word=0)
+            if actual != "ignored_read":
+                fail(f"{name} did not leave an unrelated read undriven")
+            for data in range(256):
+                actual = pio_route(programs[name], 1, True, initial_x=56,
+                                   service_word=1 | (data << 1) | (0xFF << 9))
+                if actual != "driven_read":
+                    fail(f"{name} failed to drive an accepted read")
 
 
 def test_set_immediates_are_encodable(programs: dict[str, list[str]]) -> None:
@@ -357,9 +400,8 @@ def test_special_bank_decode(pio_text: str) -> None:
         next_program = section.find(".program ")
         if next_program >= 0:
             section = section[:next_program]
-        if ("A17-A22 = 56" not in section or "out y, 5" not in section or
-                "set x, 24" not in section or "out x, 1" not in section):
-            fail(f"{name} no longer checks all six A17-A22 bits for the legacy RAM mirrors")
+        if "out y, 6" not in section:
+            fail(f"{name} no longer checks all six A17-A22 bits for legacy RAM mirrors")
 
     for name in ("snes_read_fx3", "snes_read_fx3_dual"):
         section = pio_text.split(f".program {name}", 1)[1]
@@ -648,8 +690,8 @@ def test_listening_state(pio_text: str) -> None:
             fail(f"{name} no longer holds DATA_DIR outward after /RD rises")
         if "side 7" in raw:
             fail(f"{name} must not disable BUS_OE during a normal SNES read")
-        if "irq 0 side 5" not in raw or "pull block side 5" not in raw:
-            fail(f"{name} CPU-read path no longer changes DATA_DIR before firmware drive")
+        if "irq 0 side 1" not in raw or "pull block side 1" not in raw:
+            fail(f"{name} CPU-read path must listen until firmware qualifies the address")
         if "set pins, 0 side 5" not in raw or "set pins, 1 side 5 [3]" not in raw:
             fail(f"{name} no longer controls ROM0 through the dedicated SET pin")
 
@@ -671,7 +713,7 @@ def test_listening_state(pio_text: str) -> None:
             fail(f"{name} no longer disables ROM1 before restoring the listening direction")
 
 def test_irq_contract(pio_text: str) -> None:
-    required_pio = ["irq wait 1", "irq 2", "irq 0 side 5"]
+    required_pio = ["irq wait 1", "irq 2", "irq 0 side 1"]
     for token in required_pio:
         if token not in pio_text:
             fail(f"PIO IRQ contract is missing {token}")
@@ -685,6 +727,7 @@ def main() -> None:
     test_set_immediates_are_encodable(programs)
     test_jump_targets_resolve(pio_text)
     test_source_driven_routes(pio_text)
+    test_read_drive_qualification(pio_text)
     test_write_capture()
     test_special_bank_decode(pio_text)
     test_selector_decode()

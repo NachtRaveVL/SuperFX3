@@ -20,5 +20,5 @@ void snes_pio_request_rom_ownership(bool blocked);
 void snes_pio_sync_rom_ownership();
 /// Returns true when the PIO reset watcher has observed /RESET asserted.
 bool snes_pio_reset_pending();
-/// Clears the reset request after the SuperFX core has been reset.
-void snes_pio_clear_reset();
+/// Applies or queues a pending reset before later CPU writes; false requests a retry.
+bool snes_pio_service_reset();

@@ -1,8 +1,10 @@
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 
 #include "pico.h"
 #include "hardware/gpio.h"
+#include "hardware/dma.h"
 #include "hardware/pio.h"
 #include "test_hardware.h"
 
@@ -90,6 +92,67 @@ static void test_fx3_frontend_round_trip() {
                  "PIO register read did not return the FX3 VCR response");
     test_require(inject_read(0x70, 0x1234) == 0xA5,
                  "PIO shared-RAM read did not return backend data");
+}
+
+static void test_noncartridge_reads_do_not_drive() {
+    TestMemory memory{};
+    SuperFx fx;
+    init_bus(fx, memory, fx3_config);
+    for (uint8_t bank : {uint8_t{0x7E}, uint8_t{0x7F}}) {
+        (void)inject_read(bank, 0x7000);
+        test_require(sdk_test::pio[PIO2_INDEX].tx[READ_SM] == 0,
+                     "cartridge drove a response for a SNES work-RAM read");
+    }
+    (void)inject_read(0x00, 0x7300);
+    test_require((sdk_test::pio[PIO2_INDEX].tx[READ_SM] & 1) != 0,
+                 "reserved cartridge register window lost its driven open-bus response");
+}
+
+static void test_write_address_dma_backpressure() {
+    TestMemory memory{};
+    SuperFx fx;
+    init_bus(fx, memory, fx3_config);
+    // Execute the configured DMA endpoints/chains with bounded hardware FIFOs.
+    // Hold the destination full, then resume it: every address must survive in order.
+    std::deque<uint32_t> source;
+    std::deque<uint32_t> destination;
+    uint32_t produced = 0;
+    uint32_t consumed = 0;
+    for (unsigned tick = 0; tick < 512; ++tick) {
+        if (produced < 32 && source.size() < 8)
+            source.push_back(0x12340000u + produced++);
+        for (unsigned channel = 0; channel < sdk_test::next_dma; ++channel) {
+            auto& dma = sdk_test::dma[channel];
+            if (!dma.running) continue;
+            if (dma.dreq == pio_get_dreq(pio0, WRITE_ADDR_SM, false) && source.empty()) continue;
+            if (dma.dreq == pio_get_dreq(pio1, WRITE_SM, true) && destination.size() == 4) continue;
+            uint32_t value;
+            if (dma.read_addr == &pio0->rxf[WRITE_ADDR_SM]) {
+                test_require(!source.empty(), "DMA read an empty source FIFO");
+                value = source.front();
+                source.pop_front();
+            } else {
+                value = *static_cast<const volatile uint32_t*>(dma.read_addr);
+            }
+            if (dma.write_addr == &pio1->txf[WRITE_SM]) {
+                test_require(destination.size() < 4, "write-address DMA overflowed the PIO1 TX FIFO");
+                destination.push_back(value);
+            } else {
+                *static_cast<volatile uint32_t*>(dma.write_addr) = value;
+            }
+            if (dma.transfer_count != dma_encode_endless_transfer_count()) {
+                test_require(dma.transfer_count == 1, "DMA model requires single-word chained transfers");
+                dma.running = false;
+                if (dma.chain_to != channel)
+                    sdk_test::dma[dma.chain_to].running = true;
+            }
+        }
+        if (tick >= 32 && tick % 3 == 0 && !destination.empty()) {
+            test_require(destination.front() == 0x12340000u + consumed++, "DMA lost write-address ordering");
+            destination.pop_front();
+        }
+    }
+    test_require(consumed == 32, "DMA did not resume after destination backpressure");
 }
 
 
@@ -226,29 +289,75 @@ static void test_legacy_ownership_reaches_read_pio() {
     SuperFx fx;
     init_bus(fx, memory, fx2_config);
 
-    test_require(sdk_test::pio[PIO2_INDEX].x[READ_SM] == 0,
+    test_require(sdk_test::pio[PIO2_INDEX].x[READ_SM] == 56,
                  "legacy read PIO started with ROM incorrectly blocked");
 
     inject_write(0x00, 0x303A, 0x18);
     inject_write(0x00, 0x301E, 0x00);
     inject_write(0x00, 0x301F, 0x00);
     test_require(fx.running(), "legacy PIO start sequence did not start the GSU");
-    test_require(sdk_test::pio[PIO2_INDEX].x[READ_SM] == 1,
+    test_require(sdk_test::pio[PIO2_INDEX].x[READ_SM] == 0,
                  "GSU ROM ownership did not propagate into the live read PIO state");
 
     test_require(fx_sync_core1_service(), "legacy core did not execute synthetic NOP");
     test_require(fx_sync_core1_service(), "legacy core did not execute STOP");
     test_require(!fx.running(), "legacy core did not stop");
-    test_require(sdk_test::pio[PIO2_INDEX].x[READ_SM] == 0,
+    test_require(sdk_test::pio[PIO2_INDEX].x[READ_SM] == 56,
                  "GSU STOP did not return direct-ROM ownership to the read PIO state");
 }
 
+static void test_post_reset_write_cannot_overtake_reset() {
+    for (bool running : {false, true}) {
+        TestMemory memory{};
+        SuperFx fx;
+        init_bus(fx, memory, fx3_config);
+        if (running) {
+            inject_write(0x00, 0x701E, 0x00);
+            inject_write(0x00, 0x701F, 0x00);
+        }
+        // Reset was latched, but the main loop has not yet had CPU time.
+        sdk_test::set_pio_interrupt(PIO1_INDEX, 2);
+        sdk_test::trigger_irq(sdk_test::pio_irq_num(PIO1_INDEX));
+        inject_write(0x00, 0x7038, 0x55);
+        snes_bus_service();
+        fx_sync_core1_service();
+        test_require(fx.state().screen_base == 0x55,
+                     "post-reset register write overtook reset and was lost");
+    }
+}
+
+static void test_reset_order_survives_full_command_queue() {
+    TestMemory memory{};
+    SuperFx fx;
+    init_bus(fx, memory, fx3_config);
+    inject_write(0x00, 0x701E, 0x00);
+    inject_write(0x00, 0x701F, 0x00);
+    unsigned queued = 0;
+    while (queued < 256 && fx_sync_cpu_write(0x703A, 0x07)) ++queued;
+    test_require(queued == 255, "test did not fill the command queue");
+    sdk_test::set_pio_interrupt(PIO1_INDEX, 2);
+    sdk_test::trigger_irq(sdk_test::pio_irq_num(PIO1_INDEX));
+    snes_bus_service();
+    test_require(snes_pio_reset_pending(), "full queue lost the pending reset");
+
+    sdk_test::tight_loop_hook = [] { (void)fx_sync_core1_service(); };
+    inject_write(0x00, 0x7038, 0x55);
+    sdk_test::tight_loop_hook = nullptr;
+    fx_sync_core1_service();
+    test_require(!snes_pio_reset_pending() && fx.state().screen_base == 0x55,
+                 "queue saturation lost reset or reordered the post-reset write");
+}
+
 int main() {
+    test_noncartridge_reads_do_not_drive();
+    test_write_address_dma_backpressure();
     test_fx3_frontend_round_trip();
     test_fx3_never_steals_parallel_rom_bus();
     test_legacy_physical_rom_transaction();
     test_pause_resume_safety();
     test_pio_reset_reaches_core1();
+    test_post_reset_write_cannot_overtake_reset();
+    test_reset_order_survives_full_command_queue();
     test_legacy_ownership_reaches_read_pio();
 
     std::puts("bus_integration_tests: PASS");

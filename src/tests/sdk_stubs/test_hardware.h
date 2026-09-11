@@ -35,6 +35,11 @@ struct DmaState {
     bool configured = false;
     bool running = false;
     bool aborted = false;
+    unsigned dreq = 0;
+    unsigned chain_to = 0;
+    uint32_t transfer_count = 0;
+    const volatile void* read_addr = nullptr;
+    volatile void* write_addr = nullptr;
 };
 
 inline std::array<bool, GPIO_COUNT> gpio_level{};

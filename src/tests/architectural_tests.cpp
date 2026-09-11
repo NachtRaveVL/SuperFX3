@@ -76,8 +76,61 @@ static void test_execution_chunking_is_architecturally_stable() {
                  "FX3 result depends on how core 1 chunks run_unlimited calls");
 }
 
+static void test_cached_program_wrap_stays_in_bank() {
+    for (uint8_t bank : {uint8_t{0x40}, uint8_t{0x70}, uint8_t{0x71}}) {
+        TestMemory memory{};
+        auto& bytes = bank == 0x40 ? memory.rom : memory.ram;
+        const uint32_t base = bank == 0x71 ? 0x10000u : 0u;
+        // Trampoline: IWT R0,#$FFF0; IBT R8,#bank; FROM R0; ALT1; LJMP R8; NOP.
+        const uint8_t entry[] = {0xF0, 0xF0, 0xFF, 0xA8, bank, 0xB0, 0x3D, 0x98, 0x01};
+        for (uint32_t i = 0; i < sizeof(entry); ++i)
+            bytes[base + 0x0200u + i] = entry[i];
+        for (uint32_t i = 0; i < 16; ++i)
+            bytes[base + 0xFFF0u + i] = 0x01;
+        bytes[base] = 0xA1; // IBT R1,#$2A, reached after 16-bit PC wrap.
+        bytes[base + 1] = 0x2A;
+        bytes[base + 2] = 0x00;
+
+        SuperFx fx;
+        fx.init(fx3_config, make_test_backend(memory));
+        fx.cpu_write(0x7034, bank);
+        fx.cpu_write(0x701E, 0x00);
+        fx.cpu_write(0x701F, 0x02);
+        fx.run_unlimited(64);
+        test_require(!fx.running() && fx.state().r[1] == 0x2A,
+                     "program-cache fill crossed the bank at 16-bit PC wrap");
+    }
+}
+
+static void test_clear_retires_old_plot_data() {
+    TestMemory memory{};
+    // Draw partial rows in both pixel caches, clear third A, then RPIX flushes
+    // any cache still pending. The cleared pixels must stay the clear color $81.
+    const uint8_t program[] = {
+        0xA0, 0x7F, 0x4E, // IBT R0,#$7F; COLOR
+        0xA1, 0x00, 0xA2, 0x00, 0x4C, // PLOT (0,0)
+        0xA1, 0x08, 0x4C, // PLOT (8,0)
+        0xA0, 0x03, 0x70, // CLEAR A
+        0xA1, 0x00, 0x13, 0x3D, 0x4C, // TO R3; ALT1; RPIX (0,0)
+        0xA1, 0x08, 0x14, 0x3D, 0x4C, // TO R4; ALT1; RPIX (8,0)
+        0x00,
+    };
+    for (uint32_t i = 0; i < sizeof(program); ++i)
+        memory.rom[i] = program[i];
+    SuperFx fx;
+    fx.init(fx3_config, make_test_backend(memory));
+    fx.cpu_write(0x703A, 0x07); // 8bpp, 160-line column stride.
+    fx.cpu_write(0x701E, 0x00);
+    fx.cpu_write(0x701F, 0x00);
+    fx.run_unlimited(64);
+    test_require(!fx.running() && fx.state().r[3] == 0x81 && fx.state().r[4] == 0x81,
+                 "old pixel-cache data overwrote an FX3 clear");
+}
+
 int main() {
     test_execution_chunking_is_architecturally_stable();
+    test_clear_retires_old_plot_data();
+    test_cached_program_wrap_stays_in_bank();
     std::puts("architectural_tests: PASS");
     return 0;
 }

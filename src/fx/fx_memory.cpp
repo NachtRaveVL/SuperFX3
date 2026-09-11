@@ -254,7 +254,9 @@ void SuperFx::fill_cache_line(uint16_t cache_addr) {
         wait_rom_operation();
         wait_for_rom_access();
 
-        const uint32_t base = (static_cast<uint32_t>(bank) << 16) + state_.cache_base + dest;
+        // CBR-relative cache lines wrap with the 16-bit PC, never into the next bank.
+        const uint32_t base = (static_cast<uint32_t>(bank) << 16) |
+                              static_cast<uint16_t>(state_.cache_base + dest);
         for (unsigned i = 0; i < 16; i++)
             cache_[dest + i] = read_rom(base + i);
     } else {
@@ -262,7 +264,8 @@ void SuperFx::fill_cache_line(uint16_t cache_addr) {
         wait_for_ram_access();
 
         if (bank == 0x70 || bank == 0x71) {
-            const uint32_t base = (static_cast<uint32_t>(bank) << 16) + state_.cache_base + dest;
+            const uint32_t base = (static_cast<uint32_t>(bank) << 16) |
+                                  static_cast<uint16_t>(state_.cache_base + dest);
             for (unsigned i = 0; i < 16; i++)
                 cache_[dest + i] = read_program_ram(base + i);
         } else {

@@ -189,10 +189,9 @@ void snes_bus_service() {
         return;
     }
 
-    if (snes_pio_reset_pending() && !g_bus_request.load(std::memory_order_acquire) && fx_sync_reset()) {
+    if (snes_pio_reset_pending() && !g_bus_request.load(std::memory_order_acquire) && snes_pio_service_reset()) {
         // Do not acknowledge /RESET until core 1 has accepted it; a full queue must retry next service pass.
         snes_irq_write(nullptr, false);
-        snes_pio_clear_reset();
         snes_pio_sync_rom_ownership();
     }
 

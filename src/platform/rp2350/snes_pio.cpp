@@ -53,6 +53,9 @@ static pio_sm_config g_read_config {};
 
 static uint g_write_addr_dma = 0;
 static dma_channel_config g_write_addr_dma_config {};
+static uint g_write_addr_tx_dma = 0;
+static dma_channel_config g_write_addr_tx_dma_config {};
+static uint32_t g_write_addr_staging = 0;
 
 static std::atomic<bool> g_pio_started {false};
 static std::atomic<bool> g_pio_paused {false};
@@ -122,7 +125,7 @@ static inline bool snes_gsu_ram_offset(const SuperFx& fx, uint32_t address, uint
 
 // Packs a driven PIO read response with data and the drive/release direction masks.
 static inline uint32_t snes_read_response(uint8_t data) {
-    return (static_cast<uint32_t>(data) << 1) | READ_RESPONSE_PINDIRS;
+    return 1u | (static_cast<uint32_t>(data) << 1) | READ_RESPONSE_PINDIRS;
 }
 
 // PIO interrupt handlers
@@ -134,7 +137,7 @@ static void __not_in_flash_func(snes_read_irq_handler)() {
 
     pio_interrupt_clear(pio2, 0);
 
-    uint32_t response = snes_read_response(0xFF);
+    uint32_t response = 0; // Unqualified reads must leave the transceiver pointing inward.
 
     if (g_fx) {
         // FIXME: Latch the SNES address at /RD, or prove the live sample has enough hold time.
@@ -150,6 +153,9 @@ static void __not_in_flash_func(snes_read_irq_handler)() {
             response = snes_read_response(fx_sync_cpu_read(addr));
         else if (snes_gsu_ram_offset(*g_fx, address, ram_offset))
             response = snes_read_response(fx_sync_cpu_ram_read(ram_offset));
+        else if (snes_is_gsu_bank(static_cast<uint8_t>(address >> 16)) &&
+                 g_fx->config().chip == FxChip::FX3 && (addr & 0xF000u) == 0x7000u)
+            response = snes_read_response(0xFF); // Reserved FX3 MMIO quarter.
         else if (g_fx->config().chip != FxChip::FX3 && !gpio_get(SNES_ROMSEL_N_PIN)) {
             // For GSU1/2, reaching the CPU handler for an ordinary /ROMSEL read
             // means the read SM already classified this transaction as blocked.
@@ -166,9 +172,6 @@ static void __not_in_flash_func(snes_read_irq_handler)() {
 static void __not_in_flash_func(snes_control_irq_handler)() {
     if (pio_interrupt_get(pio1, 2)) {
         pio_interrupt_clear(pio1, 2);
-        // FIXME: Guarantee that reset is applied before any post-reset write reaches the FX core.
-        // PIO latches /RESET immediately, but snes_bus_service() applies it later. Prove the queue
-        // and service ordering cannot allow a write after /RESET deassertion to overtake the reset.
         g_reset_pending.store(true, std::memory_order_release);
     }
 
@@ -177,6 +180,10 @@ static void __not_in_flash_func(snes_control_irq_handler)() {
     const uint32_t captured = pio_sm_get(pio1, g_write_sm);
 
     if (g_fx && gpio_get(SNES_RESET_N_PIN)) {
+        // The main loop may not have run since the reset IRQ. Put reset ahead of
+        // this write in the same command stream, including when core 1 is active.
+        while (!snes_pio_service_reset()) tight_loop_contents();
+
         const uint8_t bank = static_cast<uint8_t>(captured >> SNES_CAPTURE_ADDR_HI_SHIFT);
         const uint8_t data = static_cast<uint8_t>(captured >> SNES_CAPTURE_DATA_SHIFT);
         const uint16_t addr = static_cast<uint16_t>(captured >> SNES_CAPTURE_ADDR_LO_SHIFT);
@@ -217,14 +224,24 @@ static void snes_init_sm(PIO pio, uint sm, uint offset, const pio_sm_config* con
         panic("Unable to initialize PIO state machine");
 }
 
-// Starts the endless DMA link from PIO0 address captures to the PIO1 write FIFO.
+// Alternate one-word transfers through SRAM so BOTH FIFOs supply backpressure.
+// One DMA channel has only one DREQ: directly connecting RX to TX can overflow
+// a full TX FIFO even though RX correctly reports available source words.
 static void snes_start_write_addr_dma() {
+    dma_channel_configure(
+        g_write_addr_tx_dma,
+        &g_write_addr_tx_dma_config,
+        &pio1->txf[g_write_sm],
+        &g_write_addr_staging,
+        dma_encode_transfer_count(1),
+        false
+    );
     dma_channel_configure(
         g_write_addr_dma,
         &g_write_addr_dma_config,
-        &pio1->txf[g_write_sm],
+        &g_write_addr_staging,
         &pio0->rxf[g_write_addr_sm],
-        dma_encode_endless_transfer_count(),
+        dma_encode_transfer_count(1),
         true
     );
 }
@@ -269,10 +286,9 @@ static void snes_set_read_mode_x(bool blocked) {
         return;
     }
 
-    pio_sm_exec(
-        pio2, g_read_sm,
-        pio_encode_set(pio_x, blocked ? 1 : 0)
-    );
+    // Keep X constant throughout each read: zero blocks ROM, 56 identifies
+    // the shared-RAM bank pattern when direct parallel-ROM access is allowed.
+    snes_set_read_x(blocked ? 0u : 56u);
 
     g_rom_blocked_pio = blocked;
 }
@@ -289,8 +305,7 @@ static void snes_sync_rom_ownership_locked() {
     if (generation == g_rom_ownership_applied_generation.load(std::memory_order_relaxed))
         return;
 
-    // Never modify X during a live read. The GSU read program temporarily uses X
-    // as an address-decode constant on direct-ROM cycles.
+    // Never modify the ownership/decode value during a live read.
     if (!gpio_get(SNES_RD_N_PIN))
         return;
 
@@ -350,7 +365,16 @@ void snes_pio_pause() {
     pio_sm_set_enabled(pio1, g_write_sm, false);
     pio_sm_set_enabled(pio2, g_read_sm, false);
 
+    // Disable both channels before aborting either, preventing a last completion
+    // from chaining back into a channel that has already been aborted.
+    auto rx_disabled = g_write_addr_dma_config;
+    auto tx_disabled = g_write_addr_tx_dma_config;
+    channel_config_set_enable(&rx_disabled, false);
+    channel_config_set_enable(&tx_disabled, false);
+    dma_channel_set_config(g_write_addr_dma, &rx_disabled, false);
+    dma_channel_set_config(g_write_addr_tx_dma, &tx_disabled, false);
     dma_channel_abort(g_write_addr_dma);
+    dma_channel_abort(g_write_addr_tx_dma);
     pio_sm_clear_fifos(pio0, g_write_addr_sm);
     pio_sm_clear_fifos(pio1, g_write_sm);
 
@@ -531,6 +555,10 @@ void snes_pio_start(SuperFx& fx) {
         panic("Unable to claim write-address DMA channel");
 
     g_write_addr_dma = static_cast<uint>(claimed_write_addr_dma);
+    const int claimed_write_addr_tx_dma = dma_claim_unused_channel(true);
+    if (claimed_write_addr_tx_dma < 0)
+        panic("Unable to claim write-address TX DMA channel");
+    g_write_addr_tx_dma = static_cast<uint>(claimed_write_addr_tx_dma);
     g_write_addr_dma_config = dma_channel_get_default_config(g_write_addr_dma);
     channel_config_set_transfer_data_size(&g_write_addr_dma_config, DMA_SIZE_32);
     channel_config_set_read_increment(&g_write_addr_dma_config, false);
@@ -540,6 +568,15 @@ void snes_pio_start(SuperFx& fx) {
         &g_write_addr_dma_config,
         pio_get_dreq(pio0, g_write_addr_sm, false)
     );
+    channel_config_set_chain_to(&g_write_addr_dma_config, g_write_addr_tx_dma);
+
+    g_write_addr_tx_dma_config = dma_channel_get_default_config(g_write_addr_tx_dma);
+    channel_config_set_transfer_data_size(&g_write_addr_tx_dma_config, DMA_SIZE_32);
+    channel_config_set_read_increment(&g_write_addr_tx_dma_config, false);
+    channel_config_set_write_increment(&g_write_addr_tx_dma_config, false);
+    channel_config_set_high_priority(&g_write_addr_tx_dma_config, true);
+    channel_config_set_dreq(&g_write_addr_tx_dma_config, pio_get_dreq(pio1, g_write_sm, true));
+    channel_config_set_chain_to(&g_write_addr_tx_dma_config, g_write_addr_dma);
     snes_start_write_addr_dma();
 
     pio_sm_set_pins_with_mask64(pio2, g_read_sm, snes_idle_control_values(), snes_control_mask());
@@ -600,6 +637,17 @@ bool snes_pio_reset_pending() {
     return g_reset_pending.load(std::memory_order_acquire);
 }
 
-void snes_pio_clear_reset() {
-    g_reset_pending.store(false, std::memory_order_release);
+bool __not_in_flash_func(snes_pio_service_reset)() {
+    // Core 0 calls this from both its main loop and PIO IRQ. Keep acceptance and
+    // acknowledgement indivisible so the IRQ cannot overtake an in-progress reset
+    // or have a newly latched reset erased by the main loop's acknowledgement.
+    const uint32_t irq_state = save_and_disable_interrupts();
+    bool accepted = true;
+    if (g_reset_pending.load(std::memory_order_acquire)) {
+        accepted = fx_sync_reset();
+        if (accepted)
+            g_reset_pending.store(false, std::memory_order_release);
+    }
+    restore_interrupts(irq_state);
+    return accepted;
 }

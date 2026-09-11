@@ -38,6 +38,13 @@ void SuperFx::fx3_clear(uint8_t first_block, uint8_t last_block) {
     const auto ram_write = backend_.ram_write;
     if (!ram_write) return;
 
+    // Retire earlier stores and PLOT rows before overwriting the selected third.
+    // Otherwise a later RPIX/cache eviction can resurrect pixels from before CLEAR.
+    // Flush both caches so pending pixels outside this third are preserved too.
+    wait_ram_operation();
+    write_pixel_cache(state_.secondary_cache);
+    write_pixel_cache(state_.primary_cache);
+
     const uint32_t block_stride = static_cast<uint32_t>(fx3_layout::PLANAR_Y_TILE_STRIDE) << 6;
     const uint32_t block_count = static_cast<uint32_t>(last_block - first_block) + 1;
 
