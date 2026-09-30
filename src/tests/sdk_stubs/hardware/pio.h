@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <cassert>
 #include "../test_hardware.h"
 #include "pio_instructions.h"
 #define NUM_PIOS 3
@@ -109,7 +110,7 @@ inline void pio_gpio_init(PIO pio, uint pin) {
 }
 inline void pio_set_input_sync_bypass_with_mask64(PIO, uint64_t, uint64_t) {}
 inline void sm_config_set_in_pins(pio_sm_config*, uint) {}
-inline void sm_config_set_set_pins(pio_sm_config*, uint, uint) {}
+inline void sm_config_set_set_pins(pio_sm_config*, uint, uint count) { assert(count <= 5); }
 inline void sm_config_set_in_shift(pio_sm_config*, bool, bool, uint) {}
 inline void sm_config_set_fifo_join(pio_sm_config*, pio_fifo_join) {}
 inline void sm_config_set_jmp_pin(pio_sm_config*, uint) {}

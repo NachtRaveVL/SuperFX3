@@ -225,7 +225,7 @@ private:
     void op_add(uint8_t reg);
     /// Implements SUB/SBC/CMP and immediate subtraction forms.
     void op_sub_compare(uint8_t reg);
-    /// Implements normal MERGE or dispatches the FX3 command interface.
+    /// Implements normal MERGE, FX3 commands, and the FX3 ALT1 legacy-MERGE form.
     void op_merge();
     /// Implements AND/BIC using a register or immediate nibble operand.
     void op_and_bic(uint8_t reg);

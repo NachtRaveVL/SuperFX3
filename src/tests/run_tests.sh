@@ -17,7 +17,7 @@ COMMON_FLAGS=(
 )
 TEST_FLAGS=(-DSUPERFX3_TEST)
 CORE_INCLUDES=(-Itests/sdk_stubs -Itests/stubs -I. -Ifx)
-PICO_INCLUDES=(-Itests/sdk_stubs -I. -Ifx -Iplatform/rp2350)
+PICO_INCLUDES=(-Itests/sdk_stubs -I. -Ifx -Iplatform/rp2350 -Iusb)
 
 CORE_SOURCES=(
     fx/fx_core.cpp
@@ -32,13 +32,26 @@ CORE_SOURCES=(
     fx/fx3_commands.cpp
 )
 
+STORAGE_SOURCES=(
+    storage/fx3_save_journal.cpp
+    storage/parallel_rom_programmer.cpp
+    storage/snes_rom_layout.cpp
+    storage/snes_rom_installer.cpp
+    storage/usb_rom_volume.cpp
+)
+
 PRODUCTION_SOURCES=(
     main.cpp
     "${CORE_SOURCES[@]}"
+    "${STORAGE_SOURCES[@]}"
     platform/rp2350/fx_backend.cpp
     platform/rp2350/fx_sync.cpp
     platform/rp2350/snes_bus.cpp
     platform/rp2350/snes_pio.cpp
+    platform/rp2350/parallel_rom_gpio.cpp
+    platform/rp2350/qspi_save.cpp
+    usb/usb_descriptors.cpp
+    usb/usb_rom_loader.cpp
     tests/sdk_stubs/flash_end.cpp
 )
 
@@ -91,14 +104,8 @@ build_bus_integration_tests() {
     "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
         tests/bus_integration_tests.cpp "${CORE_SOURCES[@]}" platform/rp2350/fx_sync.cpp \
         platform/rp2350/snes_bus.cpp platform/rp2350/snes_pio.cpp \
+        storage/snes_rom_layout.cpp \
         -o "$BUILD/bus_integration_tests"
-}
-
-build_bus_integration_tests_dual_rom() {
-    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" -DSNES_PARALLEL_ROM_COUNT=2 "${PICO_INCLUDES[@]}" \
-        tests/bus_integration_tests.cpp "${CORE_SOURCES[@]}" platform/rp2350/fx_sync.cpp \
-        platform/rp2350/snes_bus.cpp platform/rp2350/snes_pio.cpp \
-        -o "$BUILD/bus_integration_tests_dual_rom"
 }
 
 build_fx_core_sanity() {
@@ -113,14 +120,52 @@ build_register_backend_tests() {
         tests/sdk_stubs/flash_end.cpp -o "$BUILD/register_backend_tests"
 }
 
+build_save_journal_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${CORE_INCLUDES[@]}" \
+        tests/save_journal_tests.cpp "${STORAGE_SOURCES[@]}" \
+        -o "$BUILD/save_journal_tests"
+}
+
+build_qspi_save_integration_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
+        -DSDK_TEST_FLASH_EMULATION tests/qspi_save_integration_tests.cpp \
+        platform/rp2350/qspi_save.cpp storage/fx3_save_journal.cpp \
+        -o "$BUILD/qspi_save_integration_tests"
+}
+
+build_parallel_rom_programmer_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${CORE_INCLUDES[@]}" \
+        tests/parallel_rom_programmer_tests.cpp storage/parallel_rom_programmer.cpp \
+        -o "$BUILD/parallel_rom_programmer_tests"
+}
+
+build_snes_rom_layout_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${CORE_INCLUDES[@]}" \
+        tests/snes_rom_layout_tests.cpp storage/snes_rom_layout.cpp \
+        -o "$BUILD/snes_rom_layout_tests"
+}
+
+build_usb_rom_volume_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${CORE_INCLUDES[@]}" \
+        tests/usb_rom_volume_tests.cpp storage/usb_rom_volume.cpp \
+        -o "$BUILD/usb_rom_volume_tests"
+}
+
+build_usb_block_order_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${CORE_INCLUDES[@]}" \
+        tests/usb_block_order_tests.cpp storage/usb_rom_volume.cpp \
+        -o "$BUILD/usb_block_order_tests"
+}
+
+build_snes_rom_installer_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${CORE_INCLUDES[@]}" \
+        tests/snes_rom_installer_tests.cpp "${STORAGE_SOURCES[@]}" \
+        -o "$BUILD/snes_rom_installer_tests"
+}
+
 build_production_stub() {
     "$CXX" "${COMMON_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
         "${PRODUCTION_SOURCES[@]}" -o "$BUILD/superfx3_stub_link"
-}
-
-build_production_stub_dual_rom() {
-    "$CXX" "${COMMON_FLAGS[@]}" -DSNES_PARALLEL_ROM_COUNT=2 "${PICO_INCLUDES[@]}" \
-        "${PRODUCTION_SOURCES[@]}" -o "$BUILD/superfx3_dual_rom_stub_link"
 }
 
 printf "Compiler: %s\n" "$("$CXX" --version | head -n 1)"
@@ -129,7 +174,9 @@ echo
 echo "== Python/static tests =="
 run_stage "PIO static checks" python3 tests/pio_static_tests.py
 run_stage "QSPI image packer" python3 tests/packer_tests.py
+run_stage "QSPI/parallel storage separation" python3 tests/storage_separation_tests.py
 run_stage "SNES ROM bus image" python3 tests/snes_rom_image_tests.py
+run_stage "USB installer preservation plan" python3 tests/usb_installer_plan_tests.py
 run_stage "FX3 diagnostic ROM sources" python3 ../testrom/build.py --check --build-dir "$BUILD/testrom-check"
 
 echo
@@ -145,8 +192,6 @@ run_stage "CXX architectural_tests" build_core_test architectural_tests
 run_stage "RUN architectural_tests" "$BUILD/architectural_tests"
 run_stage "CXX bus_integration_tests" build_bus_integration_tests
 run_stage "RUN bus_integration_tests" "$BUILD/bus_integration_tests"
-run_stage "CXX bus_integration dual-ROM" build_bus_integration_tests_dual_rom
-run_stage "RUN bus_integration dual-ROM" "$BUILD/bus_integration_tests_dual_rom"
 
 echo
 echo "== Synchronization tests =="
@@ -164,9 +209,25 @@ run_stage "CXX register_backend_tests" build_register_backend_tests
 run_stage "RUN register_backend_tests" "$BUILD/register_backend_tests"
 
 echo
+echo "== QSPI save journal tests =="
+run_stage "CXX save_journal_tests" build_save_journal_tests
+run_stage "RUN save_journal_tests" "$BUILD/save_journal_tests"
+run_stage "CXX QSPI save integration" build_qspi_save_integration_tests
+run_stage "RUN QSPI save integration" "$BUILD/qspi_save_integration_tests"
+run_stage "CXX parallel_rom_programmer" build_parallel_rom_programmer_tests
+run_stage "RUN parallel_rom_programmer" "$BUILD/parallel_rom_programmer_tests"
+run_stage "CXX SNES ROM layout" build_snes_rom_layout_tests
+run_stage "RUN SNES ROM layout" "$BUILD/snes_rom_layout_tests"
+run_stage "CXX USB ROM volume" build_usb_rom_volume_tests
+run_stage "RUN USB ROM volume" "$BUILD/usb_rom_volume_tests"
+run_stage "CXX USB block ordering" build_usb_block_order_tests
+run_stage "RUN USB block ordering" "$BUILD/usb_block_order_tests"
+run_stage "CXX NOR installer integration" build_snes_rom_installer_tests
+run_stage "RUN NOR installer integration" "$BUILD/snes_rom_installer_tests"
+
+echo
 echo "== Full production strict stub link =="
 run_stage "CXX production stub link" build_production_stub
-run_stage "CXX dual-ROM stub link" build_production_stub_dual_rom
 
 echo
 status "All host/static tests" "PASS"

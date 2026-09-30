@@ -28,6 +28,14 @@ inline void gpio_put(uint pin, bool value) {
         ++sdk_test::gpio_low_count.at(pin);
 }
 inline void gpio_put_masked64(uint64_t mask, uint64_t values) {
+    for (uint pin = 0; pin < sdk_test::GPIO_COUNT; ++pin) {
+        const uint64_t bit = uint64_t{1} << pin;
+        if (mask & bit) {
+            ++sdk_test::gpio_put_count.at(pin);
+            if (!(values & bit))
+                ++sdk_test::gpio_low_count.at(pin);
+        }
+    }
     sdk_test::set_gpio_mask(mask, values);
 }
 inline bool gpio_get(uint pin) {

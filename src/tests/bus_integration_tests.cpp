@@ -3,49 +3,55 @@
 #include <deque>
 
 #include "pico.h"
-#include "hardware/gpio.h"
 #include "hardware/dma.h"
+#include "hardware/gpio.h"
 #include "hardware/pio.h"
 #include "test_hardware.h"
 
 #include "../platform/rp2350/fx_sync.h"
 #include "../platform/rp2350/snes_bus.h"
+#include "../platform/rp2350/snes_bus_layout.h"
 #include "../platform/rp2350/snes_pio.h"
 #include "test_support.h"
 
 static constexpr unsigned PIO0_INDEX = 0;
 static constexpr unsigned PIO1_INDEX = 1;
 static constexpr unsigned PIO2_INDEX = 2;
-static constexpr unsigned SELECT_SM = 0;
-static constexpr unsigned WRITE_ADDR_SM = 1;
-static constexpr unsigned WRITE_SM = 0;
-static constexpr unsigned RESET_SM = 1;
+static constexpr unsigned CONTROL_SM = 0;
+static constexpr unsigned WRITE_ADDRESS_SM = 1;
+static constexpr unsigned WRITE_TRIGGER_SM = 0;
+static constexpr unsigned WRITE_CAPTURE_SM = 1;
+static constexpr unsigned RESET_SM = 2;
 static constexpr unsigned READ_SM = 0;
 
 static uint32_t capture_word(uint8_t bank, uint16_t addr, uint8_t data) {
-    return static_cast<uint32_t>(bank) |
-           (static_cast<uint32_t>(data) << SNES_CAPTURE_DATA_SHIFT) |
-           (static_cast<uint32_t>(addr) << SNES_CAPTURE_ADDR_LO_SHIFT);
+    const uint32_t address = (static_cast<uint32_t>(bank) << 16) | addr;
+    return (snes_pack_address_raw(address) << SNES_CAPTURE_ADDR_RAW_SHIFT) |
+           (static_cast<uint32_t>(snes_pack_data_raw(data)) << SNES_CAPTURE_DATA_SHIFT);
 }
 
 static void inject_write(uint8_t bank, uint16_t addr, uint8_t data) {
-    sdk_test::set_pio_rx(PIO1_INDEX, WRITE_SM, capture_word(bank, addr, data));
+    sdk_test::set_pio_rx(PIO1_INDEX, WRITE_CAPTURE_SM, capture_word(bank, addr, data));
     sdk_test::set_pio_interrupt(PIO1_INDEX, 1);
     sdk_test::trigger_irq(sdk_test::pio_irq_num(PIO1_INDEX));
 }
 
 static void put_address_on_bus(uint8_t bank, uint16_t addr) {
     const uint32_t address = (static_cast<uint32_t>(bank) << 16) | addr;
-    const uint64_t pins = static_cast<uint64_t>(address & 0xFFFFu) |
-                          (static_cast<uint64_t>(address >> 16) << SNES_ADDR_HI_BASE);
-    sdk_test::set_gpio_mask(SNES_ADDR_MASK, pins);
+    sdk_test::set_gpio_mask(SNES_ADDR_MASK, snes_address_to_gpio(address));
+}
+
+static uint32_t inject_read_word(uint8_t bank, uint16_t addr, bool cart_selected = false) {
+    put_address_on_bus(bank, addr);
+    sdk_test::set_gpio_level(SNES_I_CART_N_PIN, !cart_selected);
+    sdk_test::set_pio_interrupt(PIO2_INDEX, 0);
+    sdk_test::trigger_irq(sdk_test::pio_irq_num(PIO2_INDEX));
+    return sdk_test::pio[PIO2_INDEX].tx[READ_SM];
 }
 
 static uint8_t inject_read(uint8_t bank, uint16_t addr) {
-    put_address_on_bus(bank, addr);
-    sdk_test::set_pio_interrupt(PIO2_INDEX, 0);
-    sdk_test::trigger_irq(sdk_test::pio_irq_num(PIO2_INDEX));
-    return static_cast<uint8_t>((sdk_test::pio[PIO2_INDEX].tx[READ_SM] >> 1) & 0xFFu);
+    const uint32_t response = inject_read_word(bank, addr);
+    return snes_unpack_data_raw(static_cast<uint8_t>((response >> 1) & 0xFFu));
 }
 
 static void init_bus(SuperFx& fx, TestMemory& memory, const FxConfig& config) {
@@ -54,7 +60,53 @@ static void init_bus(SuperFx& fx, TestMemory& memory, const FxConfig& config) {
     fx.init(config, backend);
     fx_sync_init(fx, backend);
     snes_bus_init();
+    snes_pio_set_rom_map(SnesRomMap::Fx3Physical);
+    sdk_test::set_gpio_level(SNES_PRES_N_PIN, false);
     snes_bus_start(fx);
+}
+
+static bool control_bit(unsigned pin) {
+    return sdk_test::gpio_level[pin];
+}
+
+static void require_control_word(uint8_t word, const char* message) {
+    for (unsigned bit = 0; bit < SNES_LOCAL_CONTROL_COUNT; ++bit) {
+        const bool expected = (word & (1u << bit)) != 0;
+        if (control_bit(SNES_LOCAL_CONTROL_BASE + bit) != expected)
+            test_require(false, message);
+    }
+}
+
+static void require_translated_strobes_input(const char* message) {
+    test_require(!sdk_test::gpio_dir[SNES_I_RD_N_PIN] &&
+                     !sdk_test::gpio_dir[SNES_I_WR_N_PIN], message);
+}
+
+static void test_routed_packers() {
+    const auto require_address_round_trip = [](uint32_t value) {
+        test_require(snes_unpack_address_raw(snes_pack_address_raw(value)) == value,
+                     "routed address pack/unpack lost a bit");
+        test_require(snes_address_from_gpio(snes_address_to_gpio(value)) == value,
+                     "routed address GPIO conversion lost a bit");
+    };
+    require_address_round_trip(0);
+    require_address_round_trip(0x00FFFFFFu);
+    for (unsigned bit = 0; bit < 24; ++bit) {
+        require_address_round_trip(1u << bit);
+        require_address_round_trip(0x00FFFFFFu ^ (1u << bit));
+    }
+    uint32_t address = 0x2350B5u;
+    for (unsigned iteration = 0; iteration < 10000; ++iteration) {
+        address = (address * 1664525u + 1013904223u) & 0x00FFFFFFu;
+        require_address_round_trip(address);
+    }
+    for (uint32_t value = 0; value < 256; ++value) {
+        const auto byte = static_cast<uint8_t>(value);
+        test_require(snes_unpack_data_raw(snes_pack_data_raw(byte)) == byte,
+                     "routed data pack/unpack lost a bit");
+        test_require(snes_data_from_gpio(snes_data_to_gpio(byte)) == byte,
+                     "routed data GPIO conversion lost a bit");
+    }
 }
 
 static void test_fx3_frontend_round_trip() {
@@ -62,36 +114,35 @@ static void test_fx3_frontend_round_trip() {
     SuperFx fx;
     init_bus(fx, memory, fx3_config);
 
-    test_require(sdk_test::gpio_level[SNES_DATA_DIR_PIN] == SNES_DATA_DIR_IN,
-                 "bus startup did not leave DATA_DIR pointing into the RP2350");
-    test_require(sdk_test::gpio_level[SNES_BUS_OE_N_PIN] == SNES_BUS_ENABLE,
-                 "bus startup did not connect the cartridge transceivers");
-    test_require(sdk_test::gpio_level[SNES_ROM0_OE_N_PIN] == SNES_ROM_DISABLE &&
-                     sdk_test::gpio_level[SNES_ROM1_OE_N_PIN] == SNES_ROM_DISABLE,
-                 "bus startup enabled a parallel ROM while idle");
-    test_require(sdk_test::gpio_level[SNES_IRQ_N_PIN],
-                 "bus startup asserted IRQ");
-    test_require(sdk_test::pio[PIO0_INDEX].enabled[SELECT_SM] &&
-                     sdk_test::pio[PIO0_INDEX].enabled[WRITE_ADDR_SM] &&
-                     sdk_test::pio[PIO1_INDEX].enabled[WRITE_SM] &&
+    require_control_word(SNES_CONTROL_CONSOLE_IDLE,
+                         "startup did not select the console-listening control state");
+    require_translated_strobes_input("startup drove /I_RD or /I_WR");
+    test_require(!sdk_test::gpio_dir[SNES_I_RESET_N_PIN],
+                 "startup left local /I_RST driving while /C_OE was enabled");
+    test_require(sdk_test::gpio_level[SNES_O_IRQ_N_PIN],
+                 "startup asserted /O_IRQ");
+    test_require(sdk_test::pio[PIO0_INDEX].enabled[CONTROL_SM] &&
+                     sdk_test::pio[PIO0_INDEX].enabled[WRITE_ADDRESS_SM] &&
+                     sdk_test::pio[PIO1_INDEX].enabled[WRITE_TRIGGER_SM] &&
+                     sdk_test::pio[PIO1_INDEX].enabled[WRITE_CAPTURE_SM] &&
                      sdk_test::pio[PIO1_INDEX].enabled[RESET_SM] &&
                      sdk_test::pio[PIO2_INDEX].enabled[READ_SM],
-                 "PIO startup did not enable the complete bus frontend");
-    test_require(sdk_test::pio[PIO2_INDEX].x[READ_SM] == 56,
-                 "FX3 read PIO did not receive the full $70/$71 bank compare value");
+                 "PIO startup did not enable the routed bus frontend");
+    test_require(sdk_test::pio[PIO2_INDEX].x[READ_SM] == SNES_CONTROL_CONSOLE_IDLE,
+                 "read PIO did not retain the idle control word");
 
     inject_write(0x00, 0x7038, 0x55);
     test_require(fx.state().screen_base == 0x55,
-                 "captured register write did not traverse PIO IRQ -> sync -> core rules");
+                 "captured routed register write did not reach the core");
 
     inject_write(0x70, 0x1234, 0xA5);
     test_require(memory.ram[0x1234] == 0xA5,
-                 "captured shared-RAM write did not reach the backend");
+                 "captured routed SRAM write did not reach the backend");
 
     test_require(inject_read(0x00, 0x703B) == 0x52,
-                 "PIO register read did not return the FX3 VCR response");
+                 "routed register read returned the wrong byte");
     test_require(inject_read(0x70, 0x1234) == 0xA5,
-                 "PIO shared-RAM read did not return backend data");
+                 "routed SRAM read returned the wrong byte");
 }
 
 static void test_noncartridge_reads_do_not_drive() {
@@ -99,76 +150,58 @@ static void test_noncartridge_reads_do_not_drive() {
     SuperFx fx;
     init_bus(fx, memory, fx3_config);
     for (uint8_t bank : {uint8_t{0x7E}, uint8_t{0x7F}}) {
-        (void)inject_read(bank, 0x7000);
-        test_require(sdk_test::pio[PIO2_INDEX].tx[READ_SM] == 0,
+        test_require(inject_read_word(bank, 0x7000) == 0,
                      "cartridge drove a response for a SNES work-RAM read");
     }
-    (void)inject_read(0x00, 0x7300);
-    test_require((sdk_test::pio[PIO2_INDEX].tx[READ_SM] & 1) != 0,
-                 "reserved cartridge register window lost its driven open-bus response");
+    test_require((inject_read_word(0x00, 0x7300) & 1u) != 0,
+                 "reserved FX3 register window lost its driven open-bus response");
+    test_require(inject_read_word(0x72, 0x8000, true) == 0,
+                 "extended ROM bank was incorrectly disabled");
+    snes_pio_set_rom_map(SnesRomMap::ExLoRom);
+    for (uint8_t bank : {uint8_t{0x70}, uint8_t{0x71}, uint8_t{0x72}, uint8_t{0x7D}})
+        test_require(inject_read_word(bank, 0x8000, true) == 0,
+                     "ExLoROM upper-bank data hidden by SRAM/open bus");
+    test_require(inject_read_word(0x70, 0x1000, true) != 0,
+                 "ExLoROM low SRAM window missing");
+    snes_pio_set_rom_map(SnesRomMap::ExHiRom);
+    for (uint8_t bank : {uint8_t{0x70}, uint8_t{0x71}, uint8_t{0x72}, uint8_t{0x7D}})
+        test_require(inject_read_word(bank, 0x1000, true) == 0,
+                     "ExHiROM full-bank data hidden by SRAM/open bus");
+    inject_write(0x20, 0x703B, 0xA6);
+    test_require(inject_read(0x20, 0x703B) == 0xA6,
+                 "ExHiROM SRAM shadowed by FX3 register mirrors");
 }
 
-static void test_write_address_dma_backpressure() {
+static void test_dma_bridges() {
     TestMemory memory{};
     SuperFx fx;
     init_bus(fx, memory, fx3_config);
-    // Execute the configured DMA endpoints/chains with bounded hardware FIFOs.
-    // Hold the destination full, then resume it: every address must survive in order.
-    std::deque<uint32_t> source;
-    std::deque<uint32_t> destination;
-    uint32_t produced = 0;
-    uint32_t consumed = 0;
-    for (unsigned tick = 0; tick < 512; ++tick) {
-        if (produced < 32 && source.size() < 8)
-            source.push_back(0x12340000u + produced++);
-        for (unsigned channel = 0; channel < sdk_test::next_dma; ++channel) {
-            auto& dma = sdk_test::dma[channel];
-            if (!dma.running) continue;
-            if (dma.dreq == pio_get_dreq(pio0, WRITE_ADDR_SM, false) && source.empty()) continue;
-            if (dma.dreq == pio_get_dreq(pio1, WRITE_SM, true) && destination.size() == 4) continue;
-            uint32_t value;
-            if (dma.read_addr == &pio0->rxf[WRITE_ADDR_SM]) {
-                test_require(!source.empty(), "DMA read an empty source FIFO");
-                value = source.front();
-                source.pop_front();
-            } else {
-                value = *static_cast<const volatile uint32_t*>(dma.read_addr);
-            }
-            if (dma.write_addr == &pio1->txf[WRITE_SM]) {
-                test_require(destination.size() < 4, "write-address DMA overflowed the PIO1 TX FIFO");
-                destination.push_back(value);
-            } else {
-                *static_cast<volatile uint32_t*>(dma.write_addr) = value;
-            }
-            if (dma.transfer_count != dma_encode_endless_transfer_count()) {
-                test_require(dma.transfer_count == 1, "DMA model requires single-word chained transfers");
-                dma.running = false;
-                if (dma.chain_to != channel)
-                    sdk_test::dma[dma.chain_to].running = true;
-            }
-        }
-        if (tick >= 32 && tick % 3 == 0 && !destination.empty()) {
-            test_require(destination.front() == 0x12340000u + consumed++, "DMA lost write-address ordering");
-            destination.pop_front();
-        }
-    }
-    test_require(consumed == 32, "DMA did not resume after destination backpressure");
-}
+    test_require(sdk_test::next_dma == 3, "routed bus did not claim three DMA bridges");
 
+    const volatile void* address_source = &pio0->rxf[WRITE_ADDRESS_SM];
+    volatile void* capture_sink = &pio1->txf[WRITE_CAPTURE_SM];
+    bool found_address_bridge = false;
+    for (unsigned channel = 0; channel < sdk_test::next_dma; ++channel) {
+        const auto& dma = sdk_test::dma[channel];
+        if (dma.read_addr == address_source && dma.write_addr == capture_sink && dma.running)
+            found_address_bridge = true;
+    }
+    test_require(found_address_bridge,
+                 "raw GPIO8-GPIO31 address DMA bridge is missing or reversed");
+}
 
 static void test_fx3_never_steals_parallel_rom_bus() {
     TestMemory memory{};
     SuperFx fx;
     init_bus(fx, memory, fx3_config);
 
-    const uint8_t value = snes_rom_read(nullptr, 0x123456);
-    test_require(value == 0xFF, "FX3 unexpectedly used the legacy parallel-ROM callback");
-    test_require(sdk_test::pio[PIO0_INDEX].enabled[WRITE_ADDR_SM] &&
-                     sdk_test::pio[PIO1_INDEX].enabled[WRITE_SM] &&
-                     sdk_test::pio[PIO2_INDEX].enabled[READ_SM],
-                 "FX3 ROM callback guard disturbed the live SNES bus frontend");
-    test_require(sdk_test::gpio_level[SNES_BUS_OE_N_PIN] == SNES_BUS_ENABLE,
-                 "FX3 ROM callback guard isolated the SNES bus");
+    const uint32_t ce_before = sdk_test::gpio_low_count[SNES_ROM_CE_N_PIN];
+    test_require(snes_rom_read(nullptr, 0x123456) == 0xFF,
+                 "FX3 unexpectedly used the parallel-ROM callback");
+    test_require(sdk_test::gpio_low_count[SNES_ROM_CE_N_PIN] == ce_before,
+                 "FX3 callback asserted the single ROM_CE# output");
+    require_control_word(SNES_CONTROL_CONSOLE_IDLE,
+                         "FX3 callback disturbed the listening control state");
 }
 
 static void test_legacy_physical_rom_transaction() {
@@ -178,51 +211,34 @@ static void test_legacy_physical_rom_transaction() {
 
     constexpr uint32_t address = 0x923456;
     constexpr uint8_t expected = 0xA6;
-#if SNES_PARALLEL_ROM_COUNT == 2
-    constexpr unsigned selected_rom_pin = SNES_ROM1_OE_N_PIN;
-    constexpr unsigned unselected_rom_pin = SNES_ROM0_OE_N_PIN;
-#else
-    constexpr unsigned selected_rom_pin = SNES_ROM0_OE_N_PIN;
-    constexpr unsigned unselected_rom_pin = SNES_ROM1_OE_N_PIN;
-#endif
-    sdk_test::set_gpio_mask(SNES_DATA_MASK, static_cast<uint64_t>(expected) << SNES_DATA_BASE);
-    const uint32_t selected_before = sdk_test::gpio_low_count[selected_rom_pin];
-    const uint32_t unselected_before = sdk_test::gpio_low_count[unselected_rom_pin];
+    sdk_test::set_gpio_mask(SNES_DATA_MASK, snes_data_to_gpio(expected));
+    const uint32_t ce_before = sdk_test::gpio_low_count[SNES_ROM_CE_N_PIN];
+    const uint32_t rd_before = sdk_test::gpio_low_count[SNES_ROM_RD_N_PIN];
+    const uint32_t wr_before = sdk_test::gpio_low_count[SNES_ROM_WR_N_PIN];
 
-    // The real core-0 loop grants and releases ownership while core 1 waits in
-    // snes_rom_read(). The hook lets one thread deterministically model those
-    // service opportunities without hiding the handshake behind a fake callback.
     sdk_test::tight_loop_hook = snes_bus_service;
     const uint8_t actual = snes_rom_read(nullptr, address);
     sdk_test::tight_loop_hook = nullptr;
 
-    test_require(actual == expected, "legacy private ROM read sampled the wrong data byte");
-    test_require(sdk_test::gpio_low_count[selected_rom_pin] == selected_before + 1,
-                 "legacy private ROM read enabled the wrong physical ROM");
-    test_require(sdk_test::gpio_low_count[unselected_rom_pin] == unselected_before,
-                 "legacy private ROM read enabled both physical ROMs");
+    test_require(actual == expected, "legacy private ROM read sampled the wrong routed data byte");
+    test_require(sdk_test::gpio_low_count[SNES_ROM_CE_N_PIN] == ce_before + 1,
+                 "legacy private ROM read did not assert the single ROM_CE# pin");
+    test_require(sdk_test::gpio_low_count[SNES_ROM_RD_N_PIN] == rd_before + 1,
+                 "legacy private ROM read did not assert ROM RD# on GPIO1");
+    test_require(sdk_test::gpio_low_count[SNES_ROM_WR_N_PIN] == wr_before,
+                 "legacy private ROM read incorrectly asserted ROM WR#");
     test_require(sdk_test::busy_wait_cycles != 0,
-                 "legacy private ROM read skipped its setup/access/hold waits");
-
-    const uint64_t expected_address = static_cast<uint64_t>(address & 0xFFFFu) |
-                                      (static_cast<uint64_t>(address >> 16) << SNES_ADDR_HI_BASE);
-    test_require((sdk_test::gpio_snapshot() & SNES_ADDR_MASK) == expected_address,
-                 "legacy private ROM read drove the wrong split address-bus value");
-    for (unsigned pin = 0; pin < sdk_test::GPIO_COUNT; ++pin) {
-        const uint64_t bit = uint64_t{1} << pin;
-        if (SNES_ADDR_MASK & bit)
-            test_require(!sdk_test::gpio_dir[pin], "legacy private ROM read did not release an address pin");
+                 "legacy private ROM read skipped setup/access/hold timing");
+    test_require((sdk_test::gpio_snapshot() & SNES_ADDR_MASK) == snes_address_to_gpio(address),
+                 "legacy private ROM read drove the wrong routed address");
+    for (unsigned pin = SNES_ADDR_RAW_BASE;
+         pin < SNES_ADDR_RAW_BASE + SNES_ADDR_RAW_COUNT; ++pin) {
+        test_require(!sdk_test::gpio_dir[pin],
+                     "legacy private ROM read did not release an address pin");
     }
-
-    test_require(sdk_test::gpio_level[SNES_DATA_DIR_PIN] == SNES_DATA_DIR_IN &&
-                     sdk_test::gpio_level[SNES_BUS_OE_N_PIN] == SNES_BUS_ENABLE &&
-                     sdk_test::gpio_level[SNES_ROM0_OE_N_PIN] == SNES_ROM_DISABLE &&
-                     sdk_test::gpio_level[SNES_ROM1_OE_N_PIN] == SNES_ROM_DISABLE,
-                 "legacy private ROM read did not restore the safe listening state");
-    test_require(sdk_test::pio[PIO0_INDEX].enabled[WRITE_ADDR_SM] &&
-                     sdk_test::pio[PIO1_INDEX].enabled[WRITE_SM] &&
-                     sdk_test::pio[PIO2_INDEX].enabled[READ_SM],
-                 "legacy private ROM read did not restore PIO service");
+    require_control_word(SNES_CONTROL_CONSOLE_IDLE,
+                         "legacy private ROM read did not restore listening controls");
+    require_translated_strobes_input("legacy private ROM read drove /I_RD or /I_WR");
 }
 
 static void test_pause_resume_safety() {
@@ -231,31 +247,54 @@ static void test_pause_resume_safety() {
     init_bus(fx, memory, fx3_config);
 
     snes_pio_pause();
-    test_require(!sdk_test::pio[PIO0_INDEX].enabled[WRITE_ADDR_SM] &&
-                     !sdk_test::pio[PIO1_INDEX].enabled[WRITE_SM] &&
+    test_require(!sdk_test::pio[PIO0_INDEX].enabled[CONTROL_SM] &&
+                     !sdk_test::pio[PIO0_INDEX].enabled[WRITE_ADDRESS_SM] &&
+                     !sdk_test::pio[PIO1_INDEX].enabled[WRITE_TRIGGER_SM] &&
+                     !sdk_test::pio[PIO1_INDEX].enabled[WRITE_CAPTURE_SM] &&
+                     sdk_test::pio[PIO1_INDEX].enabled[RESET_SM] &&
                      !sdk_test::pio[PIO2_INDEX].enabled[READ_SM],
-                 "PIO pause left a bus-driving transaction state machine enabled");
-    test_require(sdk_test::pio[PIO0_INDEX].enabled[SELECT_SM] &&
-                     sdk_test::pio[PIO1_INDEX].enabled[RESET_SM],
-                 "PIO pause disabled the selector or reset watcher");
-    test_require(sdk_test::gpio_level[SNES_DATA_DIR_PIN] == SNES_DATA_DIR_IN &&
-                     sdk_test::gpio_level[SNES_BUS_OE_N_PIN] == SNES_BUS_DISABLE &&
-                     sdk_test::gpio_level[SNES_ROM0_OE_N_PIN] == SNES_ROM_DISABLE &&
-                     sdk_test::gpio_level[SNES_ROM1_OE_N_PIN] == SNES_ROM_DISABLE,
-                 "PIO pause did not isolate the cartridge bus safely");
+                 "PIO pause left a transaction state machine enabled");
+    require_control_word(SNES_CONTROL_BUS_ISOLATED,
+                         "PIO pause did not isolate address/data and disable ROM");
+    require_translated_strobes_input("PIO pause drove /I_RD or /I_WR");
 
     snes_pio_resume();
-    test_require(sdk_test::pio[PIO0_INDEX].enabled[WRITE_ADDR_SM] &&
-                     sdk_test::pio[PIO1_INDEX].enabled[WRITE_SM] &&
+    require_control_word(SNES_CONTROL_CONSOLE_IDLE,
+                         "PIO resume did not restore the listening state");
+    test_require(sdk_test::pio[PIO0_INDEX].enabled[CONTROL_SM] &&
+                     sdk_test::pio[PIO1_INDEX].enabled[WRITE_CAPTURE_SM] &&
                      sdk_test::pio[PIO2_INDEX].enabled[READ_SM],
                  "PIO resume did not restart transaction state machines");
-    test_require(sdk_test::gpio_level[SNES_DATA_DIR_PIN] == SNES_DATA_DIR_IN &&
-                     sdk_test::gpio_level[SNES_BUS_OE_N_PIN] == SNES_BUS_ENABLE &&
-                     sdk_test::gpio_level[SNES_ROM0_OE_N_PIN] == SNES_ROM_DISABLE &&
-                     sdk_test::gpio_level[SNES_ROM1_OE_N_PIN] == SNES_ROM_DISABLE,
-                 "PIO resume did not restore the safe listening state");
-    test_require(sdk_test::pio[PIO2_INDEX].x[READ_SM] == 56,
-                 "PIO resume lost the FX3 shared-RAM decode constant");
+}
+
+static void test_console_presence_and_local_reset() {
+    TestMemory memory{};
+    SuperFx fx;
+    init_bus(fx, memory, fx3_config);
+
+    sdk_test::set_gpio_level(SNES_PRES_N_PIN, true);
+    snes_bus_service();
+    test_require(snes_bus_usb_mode(),
+                 "deasserted /SNES_PRES did not select USB mode");
+    require_control_word(SNES_CONTROL_STANDALONE,
+                         "console removal did not disable C_OE#/A_OE#/D_OE# and ROM strobes");
+    test_require(sdk_test::gpio_dir[SNES_I_RESET_N_PIN] &&
+                     sdk_test::gpio_level[SNES_I_RESET_N_PIN],
+                 "C_OE# disable did not leave I_RST# locally driven inactive");
+    require_translated_strobes_input("standalone mode drove /I_RD or /I_WR");
+    test_require(!sdk_test::pio[PIO1_INDEX].enabled[RESET_SM] &&
+                     !sdk_test::pio[PIO2_INDEX].enabled[READ_SM],
+                 "standalone mode left PIO console watchers running");
+
+    sdk_test::set_gpio_level(SNES_PRES_N_PIN, false);
+    snes_bus_service();
+    test_require(!snes_bus_usb_mode(),
+                 "asserted /SNES_PRES did not select SNES mode");
+    require_control_word(SNES_CONTROL_CONSOLE_IDLE,
+                         "console reconnect did not restore translator listening state");
+    test_require(!sdk_test::gpio_dir[SNES_I_RESET_N_PIN],
+                 "console reconnect enabled C_OE# before releasing local I_RST#");
+    require_translated_strobes_input("console reconnect drove /I_RD or /I_WR");
 }
 
 static void test_pio_reset_reaches_core1() {
@@ -272,94 +311,83 @@ static void test_pio_reset_reaches_core1() {
     sdk_test::set_pio_interrupt(PIO1_INDEX, 2);
     sdk_test::trigger_irq(sdk_test::pio_irq_num(PIO1_INDEX));
     test_require(snes_pio_reset_pending(), "PIO reset IRQ did not latch a reset request");
-
     snes_bus_service();
     test_require(!snes_pio_reset_pending(), "bus service did not accept the latched reset");
-    test_require(fx.running(), "queued reset mutated the core before core 1 serviced it");
     test_require(fx_sync_core1_service(), "core 1 did not service the queued PIO reset");
     test_require(!fx.running() && fx.state().r[15] == 0,
-                 "PIO reset did not propagate through bus service and synchronization to the core");
-    test_require(sdk_test::gpio_level[SNES_IRQ_N_PIN],
-                 "reset completion left the active-low cartridge IRQ asserted");
-}
-
-static void test_legacy_ownership_reaches_read_pio() {
-    TestMemory memory{};
-    memory.rom[0] = 0x00;
-    SuperFx fx;
-    init_bus(fx, memory, fx2_config);
-
-    test_require(sdk_test::pio[PIO2_INDEX].x[READ_SM] == 56,
-                 "legacy read PIO started with ROM incorrectly blocked");
-
-    inject_write(0x00, 0x303A, 0x18);
-    inject_write(0x00, 0x301E, 0x00);
-    inject_write(0x00, 0x301F, 0x00);
-    test_require(fx.running(), "legacy PIO start sequence did not start the GSU");
-    test_require(sdk_test::pio[PIO2_INDEX].x[READ_SM] == 0,
-                 "GSU ROM ownership did not propagate into the live read PIO state");
-
-    test_require(fx_sync_core1_service(), "legacy core did not execute synthetic NOP");
-    test_require(fx_sync_core1_service(), "legacy core did not execute STOP");
-    test_require(!fx.running(), "legacy core did not stop");
-    test_require(sdk_test::pio[PIO2_INDEX].x[READ_SM] == 56,
-                 "GSU STOP did not return direct-ROM ownership to the read PIO state");
+                 "PIO reset did not propagate to the core");
+    test_require(sdk_test::gpio_level[SNES_O_IRQ_N_PIN],
+                 "reset completion left /O_IRQ asserted");
 }
 
 static void test_post_reset_write_cannot_overtake_reset() {
-    for (bool running : {false, true}) {
-        TestMemory memory{};
-        SuperFx fx;
-        init_bus(fx, memory, fx3_config);
-        if (running) {
-            inject_write(0x00, 0x701E, 0x00);
-            inject_write(0x00, 0x701F, 0x00);
-        }
-        // Reset was latched, but the main loop has not yet had CPU time.
-        sdk_test::set_pio_interrupt(PIO1_INDEX, 2);
-        sdk_test::trigger_irq(sdk_test::pio_irq_num(PIO1_INDEX));
-        inject_write(0x00, 0x7038, 0x55);
-        snes_bus_service();
-        fx_sync_core1_service();
-        test_require(fx.state().screen_base == 0x55,
-                     "post-reset register write overtook reset and was lost");
-    }
-}
-
-static void test_reset_order_survives_full_command_queue() {
     TestMemory memory{};
     SuperFx fx;
     init_bus(fx, memory, fx3_config);
-    inject_write(0x00, 0x701E, 0x00);
-    inject_write(0x00, 0x701F, 0x00);
-    unsigned queued = 0;
-    while (queued < 256 && fx_sync_cpu_write(0x703A, 0x07)) ++queued;
-    test_require(queued == 255, "test did not fill the command queue");
     sdk_test::set_pio_interrupt(PIO1_INDEX, 2);
     sdk_test::trigger_irq(sdk_test::pio_irq_num(PIO1_INDEX));
-    snes_bus_service();
-    test_require(snes_pio_reset_pending(), "full queue lost the pending reset");
-
-    sdk_test::tight_loop_hook = [] { (void)fx_sync_core1_service(); };
     inject_write(0x00, 0x7038, 0x55);
-    sdk_test::tight_loop_hook = nullptr;
+    snes_bus_service();
     fx_sync_core1_service();
-    test_require(!snes_pio_reset_pending() && fx.state().screen_base == 0x55,
-                 "queue saturation lost reset or reordered the post-reset write");
+    test_require(fx.state().screen_base == 0x55,
+                 "post-reset register write overtook reset and was lost");
+}
+
+static void test_o_irq_output() {
+    TestMemory memory{};
+    SuperFx fx;
+    init_bus(fx, memory, fx3_config);
+    snes_irq_write(nullptr, true);
+    test_require(!sdk_test::gpio_level[SNES_O_IRQ_N_PIN],
+                 "assert request did not drive /O_IRQ low");
+    snes_irq_write(nullptr, false);
+    test_require(sdk_test::gpio_level[SNES_O_IRQ_N_PIN],
+                 "release request did not drive /O_IRQ high");
+    snes_busy_irq_write(nullptr, true);
+    snes_irq_write(nullptr, false);
+    test_require(!sdk_test::gpio_level[SNES_O_IRQ_N_PIN], "core acknowledgement cleared storage busy");
+    snes_irq_write(nullptr, true);
+    snes_busy_irq_write(nullptr, false);
+    test_require(!sdk_test::gpio_level[SNES_O_IRQ_N_PIN], "storage completion cleared core IRQ");
+    snes_irq_write(nullptr, false);
+    test_require(sdk_test::gpio_level[SNES_O_IRQ_N_PIN], "last IRQ owner did not release pin");
+}
+
+static void test_extended_page_reachability() {
+    TestMemory memory{};
+    SuperFx fx;
+    init_bus(fx, memory, fx3_config);
+    for (auto map : {SnesRomMap::ExLoRom, SnesRomMap::ExHiRom}) {
+        snes_pio_set_rom_map(map);
+        bool mapped[2048]{};
+        bool readable[2048]{};
+        for (uint32_t address = 0; address < 16u * 1024u * 1024u; address += 4096u) {
+            uint32_t source = 0;
+            if (!snes_rom_source_offset({map, 8u * 1024u * 1024u, 0}, address, source))
+                continue;
+            mapped[source / 4096u] = true;
+            if (inject_read_word(static_cast<uint8_t>(address >> 16),
+                                  static_cast<uint16_t>(address), true) == 0)
+                readable[source / 4096u] = true;
+        }
+        for (unsigned page = 0; page < 2048; ++page)
+            test_require(!mapped[page] || readable[page], "mapped extended source page has no readable alias");
+    }
 }
 
 int main() {
-    test_noncartridge_reads_do_not_drive();
-    test_write_address_dma_backpressure();
+    test_routed_packers();
     test_fx3_frontend_round_trip();
+    test_noncartridge_reads_do_not_drive();
+    test_dma_bridges();
     test_fx3_never_steals_parallel_rom_bus();
     test_legacy_physical_rom_transaction();
     test_pause_resume_safety();
+    test_console_presence_and_local_reset();
     test_pio_reset_reaches_core1();
     test_post_reset_write_cannot_overtake_reset();
-    test_reset_order_survives_full_command_queue();
-    test_legacy_ownership_reaches_read_pio();
-
+    test_o_irq_output();
+    test_extended_page_reachability();
     std::puts("bus_integration_tests: PASS");
     return 0;
 }

@@ -21,9 +21,9 @@ fx3_test_manifest.json
 
 `fx3_test_fxrom.bin` is the compact 32 KiB linked GSU payload. It is useful when a programmer or packing tool wants only the bytes that contain test code.
 
-`fx3_test_fxrom_partition.bin` is the programming-ready private FX3 ROM partition. It is exactly 3 MiB, starts with the linked payload, and fills the unused space with `0xFF`. With the current 4 MiB QSPI layout this partition belongs at flash offset `0x100000`. The build imports those layout values from `make_fx3_qspi_image.py` so the diagnostic tooling does not maintain a second copy of them.
+`fx3_test_fxrom_partition.bin` is the programming-ready private FX code partition. It is exactly 3 MiB, starts with the linked GSU payload, and fills the unused space with `0xFF`. In the fixed 4 MiB QSPI layout this partition belongs at flash offset `0x100000`. The build imports those layout values from `make_fx3_qspi_image.py` so the diagnostic tooling does not maintain a second copy of them. It is not the SNES game/program ROM, which belongs in the external parallel NOR.
 
-`fx3_test_manifest.json` records the SHA-256 and size of every artifact, the QSPI partition offset, each linked GSU entry point, and a pair ID calculated from the SNES supervisor plus the programming-ready FX partition. This provides a simple way to catch a mismatched `.sfc` and GSU image at the bench.
+`fx3_test_manifest.json` records the SHA-256 and size of every artifact, the QSPI save/ROM partition layout, each linked GSU entry point, and a pair ID calculated from the SNES supervisor plus the programming-ready FX partition. This provides a simple way to catch a mismatched `.sfc` and GSU image at the bench.
 
 The build links the GSU image first and generates `fx_entries.inc` from its symbol file. The 65816 supervisor then consumes those generated entry points. GSU routines can move around without hand-maintained addresses in the SNES program. The binaries stay separate, so GSU work can be reflashed in the private QSPI partition without changing the parallel ROM when the supervisor itself has not changed.
 
@@ -55,14 +55,14 @@ No DOS environment is required.
 
 The source generators, registry checks, firmware ABI drift checks, QSPI staging helpers, and manifest helpers are exercised by `python3 testrom/build.py --check`. That check is also part of the main host test suite.
 
-The complete host/static firmware suite passes with this first-pass diagnostic framework in the tree, including the architectural core tests, stateful SNES bus simulation, single- and dual-ROM configurations, synchronization tests, and strict production stub links.
+The complete host/static firmware suite passes with this first-pass diagnostic framework in the tree, including the architectural core tests, stateful routed-bus simulation, the single-ROM configuration, synchronization tests, and the strict production stub link.
 
 ## Programming Images
 
 To also stripe the `.sfc` for the physical parallel ROM:
 
 ```bash
-python3 testrom/build.py --pack-parallel --chip-size-mbit 64 --rom-count 1
+python3 testrom/build.py --pack-parallel --chip-size-mbit 128
 ```
 
 To build a complete QSPI image when `superfx3.bin` already exists:

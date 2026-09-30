@@ -7,11 +7,17 @@
 #pragma once
 
 #include "../../fx/fx_core.h"
+#include "../../storage/snes_rom_layout.h"
+
+/// Selects the installed ROM's SRAM windows while the bus is disconnected.
+void snes_pio_set_rom_map(SnesRomMap map);
 
 /// Starts the PIO state machines that monitor SNES bus transactions.
 void snes_pio_start(SuperFx& fx);
 /// Temporarily disconnects PIO control of the cartridge bus.
 void snes_pio_pause();
+/// Stops all PIO bus watchers before entering console-disconnected mode.
+void snes_pio_stop();
 /// Restores PIO control after a GSU-side physical ROM access.
 void snes_pio_resume();
 /// Records a new GSU ROM ownership state and applies it immediately when /RD is idle.

@@ -205,6 +205,39 @@ static bool test_fx3_merge_dispatch(TestSuperFx& fx, TestMemory& memory) {
         return false;
     }
 
+    // ALT1 restores the original GSU MERGE operation in FX3 mode. The plain
+    // opcode remains the R0-selected command interface.
+    fx.reset();
+    fx.state_.r[0] = 3;
+    fx.state_.r[7] = 0x10AA;
+    fx.state_.r[8] = 0x01BB;
+    fx.state_.flags.alt1 = true;
+    fx.state_.flags.prefix = true;
+    fx.op_merge();
+    if (fx.state_.r[0] != 0x1001 || fx.state_.flags.carry || fx.state_.flags.overflow ||
+        fx.state_.flags.sign || !fx.state_.flags.zero || fx.state_.flags.alt1 ||
+        fx.state_.flags.alt2 || fx.state_.flags.prefix) {
+        std::puts("FX3 ALT1 MERGE did not preserve the original GSU operation");
+        return false;
+    }
+
+    // ALT2 is reserved and ALT3 is the NR-RetroWorks extension space. Until
+    // commands are assigned, both forms must be harmless and consume prefixes.
+    for (uint8_t prefix = 2; prefix <= 3; ++prefix) {
+        fx.reset();
+        std::fill(memory.ram.begin() + fx3_layout::PLANAR_BASE, memory.ram.end(), 0x5A);
+        const std::vector<uint8_t> reserved_before = memory.ram;
+        fx.state_.r[0] = 3;
+        fx.state_.flags.alt1 = (prefix & 1u) != 0;
+        fx.state_.flags.alt2 = true;
+        fx.op_merge();
+        if (fx.state_.r[0] != 3 || memory.ram != reserved_before ||
+            fx.state_.flags.alt1 || fx.state_.flags.alt2) {
+            std::puts("Reserved FX3 MERGE prefix changed architectural state");
+            return false;
+        }
+    }
+
     return true;
 }
 

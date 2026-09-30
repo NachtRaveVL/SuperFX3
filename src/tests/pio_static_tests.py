@@ -1,745 +1,247 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import random
 import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PIO = ROOT / "platform/rp2350/snes_bus.pio"
 PIO_CPP = ROOT / "platform/rp2350/snes_pio.cpp"
+BUS_CPP = ROOT / "platform/rp2350/snes_bus.cpp"
+LAYOUT_H = ROOT / "platform/rp2350/snes_bus_layout.h"
 BOARD_H = ROOT.parent / "boards/snes_fx3.h"
 CMAKE = ROOT.parent / "CMakeLists.txt"
+
 
 def fail(message: str) -> None:
     print(f"FAIL: {message}", file=sys.stderr)
     raise SystemExit(1)
 
-def normalize_instruction(raw: str) -> str:
-    op = re.sub(r"\s+side\s+\d+", "", raw)
-    op = re.sub(r"\s+\[\d+\]\s*$", "", op)
-    return op.strip()
 
-def board_define(name: str) -> int:
-    text = BOARD_H.read_text()
-    match = re.search(rf"^#define\s+{re.escape(name)}\s+(\d+)\s*$", text, re.MULTILINE)
+def define(name: str) -> int:
+    match = re.search(
+        rf"^#define\s+{re.escape(name)}\s+(0x[0-9A-Fa-f]+|\d+)\s*$",
+        BOARD_H.read_text(), re.MULTILINE,
+    )
     if not match:
         fail(f"board definition is missing numeric {name}")
-    return int(match.group(1))
+    return int(match.group(1), 0)
+
 
 def parse_programs(text: str) -> dict[str, list[str]]:
     programs: dict[str, list[str]] = {}
-    current = None
-    labels: dict[str, set[str]] = {}
+    current: list[str] | None = None
     for raw in text.splitlines():
         line = raw.split(";", 1)[0].strip()
         if not line:
             continue
         if line.startswith(".program "):
-            current = line.split()[1]
-            if current in programs:
-                fail(f"duplicate PIO program {current}")
-            programs[current] = []
-            labels[current] = set()
-            continue
-        if current is None or line.startswith("."):
-            continue
-        if line.endswith(":"):
-            label = line[:-1]
-            if label in labels[current]:
-                fail(f"duplicate label {label} in {current}")
-            labels[current].add(label)
-            continue
-        programs[current].append(line)
-    return programs
-
-class PioSourceProgram:
-    def __init__(self, instructions: list[str], labels: dict[str, int], wrap_target: int):
-        self.instructions = instructions
-        self.labels = labels
-        self.wrap_target = wrap_target
-
-def parse_source_programs(text: str) -> dict[str, PioSourceProgram]:
-    programs: dict[str, PioSourceProgram] = {}
-    name = None
-    instructions: list[str] = []
-    labels: dict[str, int] = {}
-    wrap_target = 0
-
-    def finish() -> None:
-        nonlocal name, instructions, labels, wrap_target
-        if name is not None:
-            programs[name] = PioSourceProgram(instructions, labels, wrap_target)
-
-    for raw in text.splitlines():
-        line = raw.split(";", 1)[0].strip()
-        if not line:
-            continue
-        if line.startswith(".program "):
-            finish()
             name = line.split()[1]
-            instructions = []
-            labels = {}
-            wrap_target = 0
-            continue
-        if name is None:
-            continue
-        if line == ".wrap_target":
-            wrap_target = len(instructions)
-            continue
-        if line.startswith("."):
-            continue
-        if line.endswith(":"):
-            labels[line[:-1]] = len(instructions)
-            continue
-        instructions.append(line)
-
-    finish()
+            current = programs.setdefault(name, [])
+        elif current is not None and not line.startswith(".") and not line.endswith(":"):
+            current.append(re.sub(r"\s+\[\d+\]\s*$", "", line))
     return programs
 
-def pio_route(program: PioSourceProgram, in_pins: int, selector: bool, initial_x: int = 0, pull_word: int = 0, service_word: int | None = None) -> str:
-    # Minimal source-level interpreter for the instruction subset used by the bus routers.
-    # It intentionally stops at the first externally visible outcome instead of pretending
-    # to model PIO timing, FIFOs, IRQ latency, or electrical behavior.
-    x = initial_x & 0xFFFFFFFF
-    y = 0
-    isr = 0
-    osr = 0
-    rom0_enabled = False
-    service_started = False
-    data_dirs = 0
-    data_pins = 0
-    outward = False
-    pc = program.wrap_target
 
-    for _ in range(128):
-        raw = program.instructions[pc]
-        op = normalize_instruction(raw)
-        side_match = re.search(r"\bside\s+(\d+)", raw)
-        side = int(side_match.group(1)) if side_match else None
-        pc += 1
-        if side is not None and side & 4:
-            outward = True
-            if service_word == 0:
-                fail("rejected read changed the transceiver to output")
+def test_pin_map() -> None:
+    expected = {
+        "SNES_PRES_N_PIN": 0,
+        "SNES_ROM_RD_N_PIN": 1, "SNES_ROM_WR_N_PIN": 2, "SNES_ROM_CE_N_PIN": 3,
+        "SNES_ADDR_OE_N_PIN": 4, "SNES_CONTROL_OE_N_PIN": 5,
+        "SNES_DATA_DIR_PIN": 6, "SNES_DATA_OE_N_PIN": 7,
+        "SNES_A12_PIN": 8, "SNES_A11_PIN": 9, "SNES_A13_PIN": 10,
+        "SNES_A10_PIN": 11, "SNES_A14_PIN": 12, "SNES_A9_PIN": 13,
+        "SNES_A15_PIN": 14, "SNES_A8_PIN": 15, "SNES_A16_PIN": 16,
+        "SNES_A7_PIN": 17, "SNES_A17_PIN": 18, "SNES_A6_PIN": 19,
+        "SNES_A18_PIN": 20, "SNES_A5_PIN": 21, "SNES_A19_PIN": 22,
+        "SNES_A4_PIN": 23, "SNES_A20_PIN": 24, "SNES_A3_PIN": 25,
+        "SNES_A21_PIN": 26, "SNES_A2_PIN": 27, "SNES_A22_PIN": 28,
+        "SNES_A1_PIN": 29, "SNES_A23_PIN": 30, "SNES_A0_PIN": 31,
+        "SNES_I_IRQ_N_PIN": 32, "SNES_I_CART_N_PIN": 33,
+        "SNES_I_RD_N_PIN": 34, "SNES_I_WR_N_PIN": 35,
+        "SNES_I_RESET_N_PIN": 36, "SNES_I_CLK_PIN": 37,
+        "SNES_O_IRQ_N_PIN": 38, "SNES_O_RESET_N_PIN": 39,
+        "SNES_D4_PIN": 40, "SNES_D0_PIN": 41, "SNES_D5_PIN": 42,
+        "SNES_D1_PIN": 43, "SNES_D6_PIN": 44, "SNES_D2_PIN": 45,
+        "SNES_D7_PIN": 46, "SNES_D3_PIN": 47,
+    }
+    actual = {name: define(name) for name in expected}
+    if actual != expected:
+        fail("production GPIO map does not match the routed Rev A board")
+    if len(set(actual.values())) != 48:
+        fail("production GPIO map contains a duplicate pin")
 
-        if op == "nop":
-            pass
-        elif op == "mov isr, null":
-            isr = 0
-        elif op == "mov x, isr":
-            x = isr
-        elif op == "mov y, isr":
-            y = isr
-        elif op == "mov osr, isr":
-            osr = isr
-        elif op == "mov osr, y":
-            osr = y
-        elif op == "mov isr, osr":
-            isr = osr
-        elif op.startswith("in pins, "):
-            count = int(op.rsplit(" ", 1)[1])
-            isr = ((isr << count) | (in_pins & ((1 << count) - 1))) & 0xFFFFFFFF
-        elif op.startswith("in y, "):
-            count = int(op.rsplit(" ", 1)[1])
-            isr = ((isr << count) | (y & ((1 << count) - 1))) & 0xFFFFFFFF
-        elif op.startswith("out "):
-            target, count_text = op[4:].split(",", 1)
-            count = int(count_text.strip())
-            value = osr & ((1 << count) - 1)
-            osr >>= count
-            target = target.strip()
-            if target == "x":
-                x = value
-            elif target == "y":
-                y = value
-            elif target == "pindirs":
-                data_dirs = value
-            elif target == "pins":
-                data_pins = value
-            elif target != "null":
-                fail(f"source interpreter does not support OUT target {target}")
-        elif op.startswith("set x, "):
-            x = int(op.rsplit(" ", 1)[1], 0)
-        elif op.startswith("set y, "):
-            y = int(op.rsplit(" ", 1)[1], 0)
-        elif op.startswith("set pins, "):
-            value = int(op.rsplit(" ", 1)[1], 0)
-            rom0_enabled = value == 0
-            if program.labels.get("read_fx3_loop") is None and program.labels.get("read_gsu_loop") is None and \
-                    program.labels.get("read_fx3_dual_loop") is None and program.labels.get("read_gsu_dual_loop") is None:
-                return f"set:{value}"
-        elif op == "pull block":
-            osr = (service_word if service_started and service_word is not None else pull_word) & 0xFFFFFFFF
-        elif op == "push block":
-            pass
-        elif op.startswith("irq "):
-            if op.startswith("irq wait 1"):
-                return "service"
-            if op.startswith("irq 0"):
-                if outward:
-                    fail("CPU read drove the transceiver before qualifying the address")
-                if service_word is None:
-                    return "service"
-                service_started = True
-        elif op.startswith("wait "):
-            match = re.match(r"wait\s+([01])\s+gpio\s+(\d+)", op)
-            if not match:
-                fail(f"source interpreter cannot parse {op}")
-            polarity, pin = int(match.group(1)), int(match.group(2))
-            if polarity == 0:
-                continue
-            if pin == 21:
-                return "ignore"
-            if pin == 20:
-                if rom0_enabled:
-                    return "direct_rom0"
-                if side == 4:
-                    return "direct_rom1"
-                if service_started:
-                    expected_drive = bool(service_word and service_word & 1)
-                    if bool(data_dirs) != expected_drive:
-                        fail("read response drive bit disagrees with data pin directions")
-                    if expected_drive and data_pins != (service_word >> 1) & 0xFF:
-                        fail("read response shifted the wrong data byte onto D0-D7")
-                    return "driven_read" if expected_drive else "ignored_read"
-                return "read_complete"
-            continue
-        elif op.startswith("jmp "):
-            body = op[4:]
-            target = None
-            take = True
-            if body.startswith("!x "):
-                target = body.split()[1]
-                take = x == 0
-            elif body.startswith("!y "):
-                target = body.split()[1]
-                take = y == 0
-            elif body.startswith("x!=y "):
-                target = body.split()[1]
-                take = x != y
-            elif body.startswith("pin "):
-                target = body.split()[1]
-                take = selector
-            else:
-                target = body.strip()
-            if take:
-                if target in program.labels:
-                    if side == 1 and program.labels[target] == program.wrap_target:
-                        return "no_drive"
-                    pc = program.labels[target]
-                else:
-                    fail(f"source interpreter cannot resolve label {target}")
-        else:
-            fail(f"source interpreter does not support instruction: {op}")
+    controls = {
+        "SNES_CONTROL_CONSOLE_IDLE": 0x07,
+        "SNES_CONTROL_DIRECT_READ": 0x22,
+        "SNES_CONTROL_SERVICE_READ": 0x27,
+        "SNES_CONTROL_BUS_ISOLATED": 0x4F,
+        "SNES_CONTROL_ROM_READ": 0x4A,
+        "SNES_CONTROL_ROM_VERIFY": 0x5A,
+        "SNES_CONTROL_ROM_WRITE": 0x59,
+        "SNES_CONTROL_ROM_WRITE_SETUP": 0x5B,
+        "SNES_CONTROL_STANDALONE": 0x5F,
+    }
+    if any(define(name) != value for name, value in controls.items()):
+        fail("local GPIO1-GPIO7 control words no longer match the hardware truth table")
 
-    fail("source interpreter exceeded its instruction limit")
-
-def test_jump_targets_resolve(pio_text: str) -> None:
-    programs = parse_source_programs(pio_text)
-    for name, program in programs.items():
-        for insn in program.instructions:
-            op = normalize_instruction(insn)
-            if not op.startswith("jmp "):
-                continue
-            target = op.split()[-1]
-            if target not in program.labels:
-                fail(f"{name} jumps to undefined symbol {target}")
-
-def test_source_driven_routes(pio_text: str) -> None:
-    programs = parse_source_programs(pio_text)
-
-    for nibble in range(16):
-        fx3 = pio_route(programs["snes_select_fx3"], nibble, False)
-        gsu = pio_route(programs["snes_select_gsu"], nibble, False)
-        if fx3 != f"set:{1 if nibble == 7 else 0}":
-            fail(f"source-driven FX3 selector failed for ${nibble:X}xxx")
-        if gsu != f"set:{1 if nibble in (3, 6, 7) else 0}":
-            fail(f"source-driven GSU selector failed for ${nibble:X}xxx")
-
-    for fx3 in (False, True):
-        program = programs["snes_write_fx3" if fx3 else "snes_write_gsu"]
-        for bank in range(256):
-            for page in range(16):
-                selector = page == 7 if fx3 else page in (3, 6, 7)
-                in_pins = bank | (0xA5 << 8)
-                actual = pio_route(program, in_pins, selector, pull_word=page << 12)
-                special = is_fx3_special_ram_bank(bank) if fx3 else is_gsu_special_ram_bank(bank)
-                expected = "service" if selector or special else "ignore"
-                if actual != expected:
-                    mode = "FX3" if fx3 else "GSU"
-                    fail(f"source-driven {mode} write route failed at ${bank:02X}:{page:X}000: {actual}")
-
-    for fx3 in (False, True):
-        for dual in (False, True):
-            suffix = "_dual" if dual else ""
-            program = programs[f"snes_read_{'fx3' if fx3 else 'gsu'}{suffix}"]
-            for blocked in ((False,) if fx3 else (False, True)):
-                for bank in range(256):
-                    for page in range(16):
-                        selector = page == 7 if fx3 else page in (3, 6, 7)
-                        for romsel_n in (0, 1):
-                            pin_window = romsel_n | (int(selector) << 5) | (bank << 10)
-                            initial_x = 0 if blocked else 56
-                            actual = pio_route(program, pin_window, selector, initial_x=initial_x)
-
-                            if romsel_n:
-                                expected = "service" if selector else "no_drive"
-                            elif fx3:
-                                if is_fx3_special_ram_bank(bank):
-                                    expected = "service"
-                                else:
-                                    expected = f"direct_rom{1 if dual and bank & 0x80 else 0}"
-                            elif blocked:
-                                expected = "service"
-                            elif is_gsu_special_ram_bank(bank):
-                                expected = "service"
-                            else:
-                                expected = f"direct_rom{1 if dual and bank & 0x80 else 0}"
-
-                            if actual != expected:
-                                mode = "FX3" if fx3 else "GSU"
-                                population = "dual" if dual else "single"
-                                fail(
-                                    f"source-driven {mode}/{population} read route failed at "
-                                    f"${bank:02X}:{page:X}000 ROMSEL={romsel_n} blocked={blocked}: "
-                                    f"{actual}, expected {expected}"
-                                )
-
-
-def test_read_drive_qualification(pio_text: str) -> None:
-    programs = parse_source_programs(pio_text)
-    for fx3 in (False, True):
-        for dual in (False, True):
-            name = f"snes_read_{'fx3' if fx3 else 'gsu'}{'_dual' if dual else ''}"
-            # Coarse selector is high for a WRAM address with the same low page
-            # as cartridge MMIO. Core 0 rejects it with a zero response word.
-            actual = pio_route(programs[name], 1 | (0x7E << 10), True,
-                               initial_x=56, service_word=0)
-            if actual != "ignored_read":
-                fail(f"{name} did not leave an unrelated read undriven")
-            for data in range(256):
-                actual = pio_route(programs[name], 1, True, initial_x=56,
-                                   service_word=1 | (data << 1) | (0xFF << 9))
-                if actual != "driven_read":
-                    fail(f"{name} failed to drive an accepted read")
-
-
-def test_set_immediates_are_encodable(programs: dict[str, list[str]]) -> None:
-    # PIO SET has a five-bit immediate. Keep this explicit here because source-level
-    # routing tests can otherwise model an instruction that pioasm cannot encode.
-    for name, instructions in programs.items():
-        for raw in instructions:
-            op = normalize_instruction(raw)
-            match = re.match(r"set\s+\w+,\s*(0x[0-9a-fA-F]+|\d+)$", op)
-            if match and int(match.group(1), 0) > 31:
-                fail(f"{name} uses an unencodable PIO SET immediate: {op}")
 
 def test_instruction_ram(programs: dict[str, list[str]]) -> None:
+    read = programs["snes_read"]
+    release = read.index("wait 1 gpio 34")
+    if read[release + 1:release + 3] != ["mov osr, null", "out pindirs, 8"]:
+        fail("read release must clear all eight OUT pin directions, not a five-pin SET group")
     expected = {
-        "snes_select_fx3", "snes_select_gsu", "snes_write_addr", "snes_write_fx3",
-        "snes_write_gsu", "snes_reset", "snes_read_fx3", "snes_read_fx3_dual",
-        "snes_read_gsu", "snes_read_gsu_dual",
+        "snes_control_output", "snes_write_address", "snes_write_trigger",
+        "snes_write_capture", "snes_reset", "snes_read",
     }
     if set(programs) != expected:
         fail(f"unexpected PIO program set: {sorted(programs)}")
 
     loads = {
-        "PIO0 FX3": ("snes_select_fx3", "snes_write_addr"),
-        "PIO0 GSU": ("snes_select_gsu", "snes_write_addr"),
-        "PIO1 FX3": ("snes_write_fx3", "snes_reset"),
-        "PIO1 GSU": ("snes_write_gsu", "snes_reset"),
-        "PIO2 FX3 single": ("snes_read_fx3",),
-        "PIO2 FX3 dual": ("snes_read_fx3_dual",),
-        "PIO2 GSU single": ("snes_read_gsu",),
-        "PIO2 GSU dual": ("snes_read_gsu_dual",),
+        "PIO0": ("snes_control_output", "snes_write_address"),
+        "PIO1": ("snes_write_trigger", "snes_write_capture", "snes_reset"),
+        "PIO2": ("snes_read",),
     }
-    for name, names in loads.items():
-        count = sum(len(programs[n]) for n in names)
+    for pio, names in loads.items():
+        count = sum(len(programs[name]) for name in names)
         if count > 32:
-            fail(f"{name} needs {count} PIO instructions")
-        print(f"{name}: {count}/32 instructions")
+            fail(f"{pio} needs {count} PIO instructions")
+        print(f"{pio}: {count}/32 instructions")
 
-def capture_word(addr: int, bank: int, data: int) -> int:
-    # PIO1 first captures A16-A23 followed by D0-D7 into Y. PIO0/DMA supplies A0-A15.
-    y = (bank & 0xFF) | ((data & 0xFF) << 8)
-    isr = addr & 0xFFFF
-    return ((isr << 16) | y) & 0xFFFFFFFF
-
-def test_write_capture() -> None:
-    rng = random.Random(0x2350B)
-    for _ in range(10000):
-        addr = rng.randrange(0x10000)
-        bank = rng.randrange(0x100)
-        data = rng.randrange(0x100)
-        word = capture_word(addr, bank, data)
-        if (word & 0xFF) != bank or ((word >> 8) & 0xFF) != data or (word >> 16) != addr:
-            fail("PIO0/DMA/PIO1 write capture packing is incorrect")
-
-def is_fx3_special_ram_bank(bank: int) -> bool:
-    return bank in (0x70, 0x71)
-
-def is_gsu_special_ram_bank(bank: int) -> bool:
-    return bank in (0x70, 0x71, 0xF0, 0xF1)
-
-def modeled_common_bank_match(bank: int) -> bool:
-    # A17-A22 are bank bits 1-6. The shared-RAM pattern is 56 with A16 ignored.
-    return ((bank >> 1) & 0x3F) == 56
-
-def test_special_bank_decode(pio_text: str) -> None:
-    for bank in range(256):
-        common = modeled_common_bank_match(bank)
-        fx3 = common and not bool(bank & 0x80)
-        gsu = common
-        if fx3 != is_fx3_special_ram_bank(bank):
-            fail(f"FX3 PIO bank decode disagrees at bank ${bank:02X}")
-        if gsu != is_gsu_special_ram_bank(bank):
-            fail(f"GSU PIO bank decode disagrees at bank ${bank:02X}")
-
-    for name in ("snes_read_gsu", "snes_read_gsu_dual"):
-        section = pio_text.split(f".program {name}", 1)[1]
-        next_program = section.find(".program ")
-        if next_program >= 0:
-            section = section[:next_program]
-        if "out y, 6" not in section:
-            fail(f"{name} no longer checks all six A17-A22 bits for legacy RAM mirrors")
-
-    for name in ("snes_read_fx3", "snes_read_fx3_dual"):
-        section = pio_text.split(f".program {name}", 1)[1]
-        next_program = section.find(".program ")
-        if next_program >= 0:
-            section = section[:next_program]
-        if "out y, 7" not in section:
-            fail(f"{name} no longer isolates only the $70/$71 shared-RAM banks")
-
-def test_selector_decode() -> None:
-    expected_fx3 = {7}
-    expected_gsu = {3, 6, 7}
-    for nibble in range(16):
-        if (nibble == 7) != (nibble in expected_fx3):
-            fail(f"FX3 selector decode is wrong for ${nibble:X}xxx")
-        if (nibble in (3, 6, 7)) != (nibble in expected_gsu):
-            fail(f"GSU selector decode is wrong for ${nibble:X}xxx")
-
-def cpp_register_window(fx3: bool, bank: int, addr: int) -> bool:
-    if not (bank <= 0x3F or 0x80 <= bank <= 0xBF):
-        return False
-    return (0x7000 <= addr <= 0x7FFF and (addr & 0x0300) != 0x0300) if fx3 else 0x3000 <= addr <= 0x3FFF
-
-def cpp_ram_window(fx3: bool, bank: int, addr: int) -> bool:
-    if bank in (0x70, 0x71):
-        return True
-    if fx3:
-        return False
-    if bank in (0xF0, 0xF1):
-        return True
-    return (bank <= 0x3E or 0x80 <= bank <= 0xBE) and 0x6000 <= addr <= 0x7FFF
-
-def pio_service_window(fx3: bool, bank: int, addr: int) -> bool:
-    selector = ((addr >> 12) == 7) if fx3 else ((addr >> 12) in (3, 6, 7))
-    special = is_fx3_special_ram_bank(bank) if fx3 else is_gsu_special_ram_bank(bank)
-    return selector or special
-
-def test_frontend_coverage() -> None:
-    # Every CPU-visible address handled by the C++ front end must first be routed to core 0 by PIO.
-    # Exhaust the entire bank byte and every 4 KiB address page; the PIO selectors decode at this granularity.
-    for fx3 in (False, True):
-        for bank in range(256):
-            for page in range(16):
-                addr = page << 12
-                wanted = cpp_register_window(fx3, bank, addr) or cpp_ram_window(fx3, bank, addr)
-                if wanted and not pio_service_window(fx3, bank, addr):
-                    mode = "FX3" if fx3 else "GSU"
-                    fail(f"{mode} PIO misses CPU-serviced address ${bank:02X}:{addr:04X}")
-
-def test_read_response_word() -> None:
-    for data in range(256):
-        word = 1 | (data << 1) | (0xFF << 9)
-        if (word & 1) != 1:
-            fail("read response drive bit is wrong")
-        if ((word >> 1) & 0xFF) != data:
-            fail("read response data bits are wrong")
-        if ((word >> 9) & 0xFF) != 0xFF:
-            fail("read response pindir bits are wrong")
-        if ((word >> 17) & 0xFF) != 0:
-            fail("read response release bits must remain zero")
-
-def test_wait_gpio_windows(programs: dict[str, list[str]]) -> None:
-    assignment = {
-        "snes_select_fx3": (0, 31), "snes_select_gsu": (0, 31), "snes_write_addr": (0, 31),
-        "snes_write_fx3": (16, 47), "snes_write_gsu": (16, 47), "snes_reset": (16, 47),
-        "snes_read_fx3": (16, 47), "snes_read_fx3_dual": (16, 47),
-        "snes_read_gsu": (16, 47), "snes_read_gsu_dual": (16, 47),
-    }
-    wait_re = re.compile(r"^wait\s+[01]\s+gpio\s+(\d+)")
     for name, instructions in programs.items():
-        lo, hi = assignment[name]
-        for insn in instructions:
-            match = wait_re.match(insn)
-            if match:
-                pin = int(match.group(1))
-                if not lo <= pin <= hi:
-                    fail(f"{name} waits on GPIO{pin}, outside its PIO GPIO window {lo}-{hi}")
+        for instruction in instructions:
+            match = re.match(r"set\s+\w+,\s*(0x[0-9A-Fa-f]+|\d+)$", instruction)
+            if match and int(match.group(1), 0) > 31:
+                fail(f"{name} uses an unencodable SET immediate: {instruction}")
 
-def test_pio_wait_pins(programs: dict[str, list[str]]) -> None:
-    expected = {
-        "snes_write_addr": board_define("SNES_WR_N_PIN"),
-        "snes_write_fx3": board_define("SNES_WR_N_PIN"),
-        "snes_write_gsu": board_define("SNES_WR_N_PIN"),
-        "snes_reset": board_define("SNES_RESET_N_PIN"),
-        "snes_read_fx3": board_define("SNES_RD_N_PIN"),
-        "snes_read_fx3_dual": board_define("SNES_RD_N_PIN"),
-        "snes_read_gsu": board_define("SNES_RD_N_PIN"),
-        "snes_read_gsu_dual": board_define("SNES_RD_N_PIN"),
+
+def test_input_strobes(programs: dict[str, list[str]]) -> None:
+    expected_waits = {
+        "snes_write_trigger": define("SNES_I_WR_N_PIN"),
+        "snes_write_capture": define("SNES_I_WR_N_PIN"),
+        "snes_reset": define("SNES_I_RESET_N_PIN"),
+        "snes_read": define("SNES_I_RD_N_PIN"),
     }
-    wait_re = re.compile(r"^wait\s+[01]\s+gpio\s+(\d+)")
-    for name, pin in expected.items():
-        waits = [int(m.group(1)) for insn in programs[name] if (m := wait_re.match(insn))]
-        if not waits or any(wait_pin != pin for wait_pin in waits):
-            fail(f"{name} WAIT GPIOs {waits} do not match board GPIO{pin}")
+    wait_re = re.compile(r"wait\s+[01]\s+gpio\s+(\d+)")
+    for name, pin in expected_waits.items():
+        waits = [int(match.group(1)) for insn in programs[name]
+                 if (match := wait_re.match(insn))]
+        if not waits or any(wait != pin for wait in waits):
+            fail(f"{name} waits on {waits}, expected translated input GPIO{pin}")
 
-def test_cmake_board_setup() -> None:
-    text = CMAKE.read_text()
+    all_waits = [int(match.group(1)) for instructions in programs.values() for insn in instructions
+                 if (match := wait_re.match(insn))]
+    if define("SNES_ROM_RD_N_PIN") in all_waits or define("SNES_ROM_WR_N_PIN") in all_waits:
+        fail("PIO is sampling ROM output strobes instead of /I_RD and /I_WR")
+
+    bus = BUS_CPP.read_text()
+    forbidden = [
+        "gpio_set_dir(SNES_I_RD_N_PIN, GPIO_OUT)",
+        "gpio_set_dir(SNES_I_WR_N_PIN, GPIO_OUT)",
+        "gpio_put(SNES_I_RD_N_PIN",
+        "gpio_put(SNES_I_WR_N_PIN",
+    ]
+    for token in forbidden:
+        if token in bus:
+            fail(f"translated console strobe is no longer input-only: {token}")
     required = [
-        'list(APPEND PICO_BOARD_HEADER_DIRS "${CMAKE_CURRENT_LIST_DIR}/boards")',
-        'set(PICO_BOARD snes_fx3 CACHE STRING "Pico board")',
-        'include("${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake")',
-        'pico_generate_pio_header(',
-        '${CMAKE_CURRENT_LIST_DIR}/src/platform/rp2350/snes_bus.pio',
-        'pico_enable_stdio_uart(superfx3 0)',
-        'pico_enable_stdio_usb(superfx3 0)',
-        'pico_add_extra_outputs(superfx3)',
-        'set(SNES_PARALLEL_ROM_COUNT 1 CACHE STRING "Populated parallel ROM devices (1 or 2)")',
-        'SNES_PARALLEL_ROM_COUNT=${SNES_PARALLEL_ROM_COUNT}',
+        "gpio_set_dir_masked64(SNES_I_CONTROL_MASK, 0)",
+        "gpio_put(SNES_I_RESET_N_PIN, 0)",
+        "gpio_set_dir(SNES_I_RESET_N_PIN, GPIO_OUT)",
+        "snes_local_control(SNES_CONTROL_STANDALONE)",
+        "snes_local_control(SNES_CONTROL_ROM_READ)",
     ]
     for token in required:
-        if token not in text:
-            fail(f"CMake setup is missing {token}")
+        if token not in bus:
+            fail(f"bus ownership sequencing is missing {token}")
 
-    board_pos = text.index('list(APPEND PICO_BOARD_HEADER_DIRS')
-    select_pos = text.index('set(PICO_BOARD snes_fx3')
-    import_pos = text.index('include("${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake")')
-    if board_pos > import_pos or select_pos > import_pos:
-        fail("PICO_BOARD_HEADER_DIRS and PICO_BOARD must be set before Pico SDK import")
-    if 'set(PICO_PLATFORM ' in text:
-        fail("CMake duplicates PICO_PLATFORM instead of taking it from snes_fx3.h")
+    programmer = (ROOT / "platform/rp2350/parallel_rom_gpio.cpp").read_text()
+    if programmer.count("gpio_set_dir_masked64(SNES_ADDR_MASK, 0)") < 2:
+        fail("USB ROM read/write cycles do not release every address GPIO")
 
-def test_cpp_pio_setup() -> None:
+
+def test_pio_source_contract(pio_text: str) -> None:
+    required = [
+        "out pins, 7", "in pins, 24", "in pins, 8",
+        "irq wait 1", "irq 2", "irq 0", "out pindirs, 8",
+        "wait 0 gpio 34", "wait 0 gpio 35", "wait 0 gpio 36",
+    ]
+    for token in required:
+        if token not in pio_text:
+            fail(f"routed PIO source is missing {token}")
+    if "dual" in pio_text.lower() or "ROM0" in pio_text or "ROM1" in pio_text:
+        fail("dual-ROM terminology remains in the production PIO source")
+
+
+def test_cpp_setup() -> None:
     text = PIO_CPP.read_text()
     required = [
-        "pio_set_gpio_base(pio0, SNES_PIO_ADDR_LO_BASE)",
-        "pio_set_gpio_base(pio1, SNES_PIO_CONTROL_BASE)",
-        "pio_set_gpio_base(pio2, SNES_PIO_CONTROL_BASE)",
-        "sm_config_set_in_pins(&select_config, SNES_A12_PIN)",
-        "sm_config_set_set_pins(&select_config, SNES_SERVICE_SEL_PIN, 1)",
-        "sm_config_set_in_pins(&g_write_addr_config, SNES_PIO_ADDR_LO_BASE)",
-        "sm_config_set_jmp_pin(&g_write_config, SNES_SERVICE_SEL_PIN)",
-        "sm_config_set_in_pins(&g_write_config, SNES_PIO_ADDR_DATA_BASE)",
-        "sm_config_set_in_pins(&g_read_config, SNES_ROMSEL_N_PIN)",
-        "sm_config_set_out_pins(&g_read_config, SNES_DATA_BASE, SNES_DATA_COUNT)",
-        "sm_config_set_set_pins(&g_read_config, SNES_PIO_SET_BASE, SNES_PIO_SET_COUNT)",
-        "sm_config_set_sideset_pins(&g_read_config, SNES_PIO_SIDESET_BASE)",
-        "sm_config_set_jmp_pin(&g_read_config, SNES_SERVICE_SEL_PIN)",
-        "snes_read_fx3_dual_program", "snes_read_gsu_dual_program",
-        "pio_set_irq0_source_enabled(pio1, pis_interrupt1, true)",
-        "pio_set_irq0_source_enabled(pio1, pis_interrupt2, true)",
-        "pio_set_irq0_source_enabled(pio2, pis_interrupt0, true)",
-        "static_assert(NUM_BANK0_GPIOS >= 48", "static_assert(NUM_PIOS >= 3",
+        "pio_set_gpio_base(pio0, SNES_PIO_LOWER_BASE)",
+        "pio_set_gpio_base(pio1, SNES_PIO_UPPER_BASE)",
+        "pio_set_gpio_base(pio2, SNES_PIO_UPPER_BASE)",
+        "sm_config_set_out_pins(&g_control_config, SNES_LOCAL_CONTROL_BASE, SNES_LOCAL_CONTROL_COUNT)",
+        "sm_config_set_in_pins(&g_write_address_config, SNES_ADDR_RAW_BASE)",
+        "sm_config_set_in_pins(&g_write_capture_config, SNES_DATA_RAW_BASE)",
+        "sm_config_set_jmp_pin(&g_read_config, SNES_I_CART_N_PIN)",
+        "sm_config_set_out_pins(&g_read_config, SNES_DATA_RAW_BASE, SNES_DATA_RAW_COUNT)",
+        "&pio0->txf[g_control_sm], &pio2->rxf[g_read_sm]",
+        "&pio0->txf[g_write_address_sm], &pio1->rxf[g_write_trigger_sm]",
+        "&pio1->txf[g_write_capture_sm], &pio0->rxf[g_write_address_sm]",
+        "static_assert(NUM_BANK0_GPIOS >= 48",
+        "static_assert(NUM_PIOS >= 3",
         "static_assert(PICO_PIO_USE_GPIO_BASE == 1",
     ]
     for token in required:
         if token not in text:
             fail(f"PIO C++ setup is missing {token}")
 
-    board = BOARD_H.read_text()
-    pin_tokens = [
-        "#define SNES_ADDR_LO_BASE  0",
-        "#define SNES_CONTROL_BASE  16",
-        "#define SNES_SYSCK_PIN     19",
-        "#define SNES_RD_N_PIN      20",
-        "#define SNES_WR_N_PIN      21",
-        "#define SNES_CART_N_PIN    22",
-        "#define SNES_RESET_N_PIN   23",
-        "#define SNES_IRQ_N_PIN     24",
-        "#define SNES_PARD_N_PIN    25",
-        "#define SNES_PAWR_N_PIN    26",
-        "#define SNES_SERVICE_SEL_PIN 27",
-        "#define SNES_ROM0_OE_N_PIN 28",
-        "#define SNES_ROM1_OE_N_PIN 29",
-        "#define SNES_BUS_OE_N_PIN  30",
-        "#define SNES_DATA_DIR_PIN  31",
-        "#define SNES_ADDR_HI_BASE  32",
-        "#define SNES_DATA_BASE  40",
-        "#define SNES_PIO_SIDESET_COUNT  3",
-        "pico_board_cmake_set(PICO_PLATFORM, rp2350)",
-        "#define PICO_RP2350A 0",
-        "pico_board_cmake_set_default(PICO_FLASH_SIZE_BYTES, (4 * 1024 * 1024))",
+
+def test_layout_and_response() -> None:
+    layout = LAYOUT_H.read_text()
+    for name in (
+        "snes_unpack_address_raw", "snes_pack_address_raw",
+        "snes_unpack_data_raw", "snes_pack_data_raw",
+    ):
+        if name not in layout:
+            fail(f"routed bus helper is missing {name}")
+
+    cpp = PIO_CPP.read_text()
+    if "READ_RESPONSE_CONTROL_SHIFT = 9" not in cpp or \
+            "READ_RESPONSE_PINDIRS_SHIFT = 16" not in cpp:
+        fail("read response word fields drifted from the PIO consumer")
+
+
+def test_cmake() -> None:
+    text = CMAKE.read_text()
+    required = [
+        'list(APPEND PICO_BOARD_HEADER_DIRS "${CMAKE_CURRENT_LIST_DIR}/boards")',
+        'set(PICO_BOARD snes_fx3 CACHE STRING "Pico board")',
+        "pico_generate_pio_header(",
+        "${CMAKE_CURRENT_LIST_DIR}/src/platform/rp2350/snes_bus.pio",
+        "tinyusb_device",
+        "src/usb/usb_rom_loader.cpp",
     ]
-    for token in pin_tokens:
-        if token not in board:
-            fail(f"SNES board definition is missing {token}")
+    for token in required:
+        if token not in text:
+            fail(f"CMake setup is missing {token}")
+    if "SNES_PARALLEL_ROM_COUNT" in text:
+        fail("CMake still exposes removed dual-ROM configuration")
 
-    control_pin_defs = {
-        (match.group(1), int(match.group(2)))
-        for match in re.finditer(r"^#define\s+(SNES_[A-Z0-9_]+_PIN)\s+(\d+)\s*$", board, re.MULTILINE)
-        if 16 <= int(match.group(2)) <= 31
-    }
-    expected_control_pin_defs = {
-        ("SNES_SYSCK_PIN", 19), ("SNES_RD_N_PIN", 20), ("SNES_WR_N_PIN", 21),
-        ("SNES_CART_N_PIN", 22), ("SNES_RESET_N_PIN", 23), ("SNES_IRQ_N_PIN", 24),
-        ("SNES_PARD_N_PIN", 25), ("SNES_PAWR_N_PIN", 26), ("SNES_SERVICE_SEL_PIN", 27),
-        ("SNES_ROM0_OE_N_PIN", 28), ("SNES_ROM1_OE_N_PIN", 29),
-        ("SNES_BUS_OE_N_PIN", 30), ("SNES_DATA_DIR_PIN", 31),
-    }
-    if control_pin_defs != expected_control_pin_defs:
-        fail(f"unexpected GPIO16-GPIO31 control map: {sorted(control_pin_defs)}")
-
-    required_layout = [
-        "#define SNES_PIO_SET_BASE       SNES_ROM0_OE_N_PIN",
-        "#define SNES_PIO_SET_COUNT      1",
-        "#define SNES_PIO_SIDESET_BASE   SNES_ROM1_OE_N_PIN",
-        "#define SNES_PIO_SIDESET_COUNT  3",
-    ]
-    for token in required_layout:
-        if token not in board:
-            fail(f"SNES PIO control mapping is missing {token}")
-
-    ordered_controls = [
-        "#define SNES_ROM0_OE_N_PIN 28",
-        "#define SNES_ROM1_OE_N_PIN 29",
-        "#define SNES_BUS_OE_N_PIN  30",
-        "#define SNES_DATA_DIR_PIN  31",
-    ]
-    positions = [board.index(token) for token in ordered_controls]
-    if positions != sorted(positions):
-        fail("SNES bus-control definitions are not in GPIO/physical order")
-
-    bus = (ROOT / "platform/rp2350/snes_bus.h").read_text()
-    forbidden = ["struct SnesBusPins", "SNES_BUS_PINS", "SNES_ADDR_MASK =", "SNES_DATA_MASK ="]
-    for token in forbidden:
-        if token in bus:
-            fail(f"snes_bus.h still duplicates board layout: {token}")
-
-def test_listening_state(pio_text: str) -> None:
-    board = BOARD_H.read_text()
-    bus_cpp = (ROOT / "platform/rp2350/snes_bus.cpp").read_text()
-    pio_cpp = PIO_CPP.read_text()
-
-    required_board = [
-        "#define SNES_SYSCK_PIN     19",
-        "#define SNES_RD_N_PIN      20",
-        "#define SNES_WR_N_PIN      21",
-        "#define SNES_CART_N_PIN    22",
-        "#define SNES_RESET_N_PIN   23",
-        "#define SNES_IRQ_N_PIN     24",
-        "#define SNES_PARD_N_PIN    25",
-        "#define SNES_PAWR_N_PIN    26",
-        "#define SNES_SERVICE_SEL_PIN 27",
-        "#define SNES_ROM0_OE_N_PIN 28",
-        "#define SNES_ROM1_OE_N_PIN 29",
-        "#define SNES_BUS_OE_N_PIN  30",
-        "#define SNES_DATA_DIR_PIN  31",
-        "#define SNES_BUS_ENABLE  0",
-        "#define SNES_BUS_DISABLE 1",
-        "#define SNES_PIO_SIDESET_COUNT  3",
-    ]
-    for token in required_board:
-        if token not in board:
-            fail(f"listening-state board definition is missing {token}")
-    if "SNES_DATA_OE_N_PIN" in board or "SNES_ADDR_OE_N_PIN" in board or "SNES_EXPAND_PIN" in board:
-        fail("obsolete split-OE/EXPAND definitions remain in the board map")
-
-    safe_bus = "gpio_put(SNES_BUS_OE_N_PIN, SNES_BUS_DISABLE);"
-    listen_bus = "gpio_put(SNES_BUS_OE_N_PIN, SNES_BUS_ENABLE);"
-    data_in = "gpio_put(SNES_DATA_DIR_PIN, SNES_DATA_DIR_IN);"
-    rom0_off = "gpio_put(SNES_ROM0_OE_N_PIN, SNES_ROM_DISABLE);"
-    rom1_off = "gpio_put(SNES_ROM1_OE_N_PIN, SNES_ROM_DISABLE);"
-    for token in (safe_bus, listen_bus, data_in, rom0_off, rom1_off):
-        if token not in bus_cpp:
-            fail(f"bus initialization is missing required control state: {token}")
-    if bus_cpp.index(safe_bus) > bus_cpp.index(listen_bus):
-        fail("BUS_OE must begin isolated before the listening state is enabled")
-
-    required_pause_resume = [
-        "SNES_BUS_DISABLE) << SNES_BUS_OE_N_PIN",
-        "SNES_BUS_ENABLE) << SNES_BUS_OE_N_PIN",
-        "SNES_ROM_DISABLE) << SNES_ROM0_OE_N_PIN",
-        "SNES_ROM_DISABLE) << SNES_ROM1_OE_N_PIN",
-        "pio_gpio_init(pio2, SNES_ROM0_OE_N_PIN);",
-        "pio_gpio_init(pio2, SNES_ROM1_OE_N_PIN);",
-        "sm_config_set_set_pins(&g_read_config, SNES_PIO_SET_BASE, SNES_PIO_SET_COUNT)",
-    ]
-    for token in required_pause_resume:
-        if token not in pio_cpp:
-            fail(f"PIO pause/resume no longer restores the complete listening state: {token}")
-
-    if ";   GPIO28 /ROM0_OE  (SET pin)" not in pio_text:
-        fail("PIO source no longer documents ROM0 on the SET pin")
-    if ";   GPIO29 /ROM1_OE  (side-set bit0)" not in pio_text:
-        fail("PIO source no longer documents ROM1 in the side-set group")
-    if ";   GPIO30 /BUS_OE   (side-set bit1)" not in pio_text or ";   GPIO31 DATA_DIR  (side-set bit2)" not in pio_text:
-        fail("PIO side-set documentation no longer matches the shifter-control layout")
-
-    single_names = ("snes_read_fx3", "snes_read_gsu")
-    dual_names = ("snes_read_fx3_dual", "snes_read_gsu_dual")
-    source = parse_source_programs(pio_text)
-
-    for name in single_names + dual_names:
-        program = source[name]
-        raw = "\n".join(program.instructions)
-        if "wait 1 gpio 20 side 5 [3]" not in raw:
-            fail(f"{name} no longer holds DATA_DIR outward after /RD rises")
-        if "side 7" in raw:
-            fail(f"{name} must not disable BUS_OE during a normal SNES read")
-        if "irq 0 side 1" not in raw or "pull block side 1" not in raw:
-            fail(f"{name} CPU-read path must listen until firmware qualifies the address")
-        if "set pins, 0 side 5" not in raw or "set pins, 1 side 5 [3]" not in raw:
-            fail(f"{name} no longer controls ROM0 through the dedicated SET pin")
-
-        first_outward = raw.find("side 5")
-        first_rom0 = raw.find("set pins, 0 side 5")
-        if first_outward < 0 or first_rom0 < 0 or first_outward > first_rom0:
-            fail(f"{name} no longer establishes DATA_DIR before asserting ROM0 /OE")
-
-    for name in single_names:
-        raw = "\n".join(source[name].instructions)
-        if "side 4" in raw:
-            fail(f"{name} must never enable optional ROM1 in the default single-ROM build")
-
-    for name in dual_names:
-        raw = "\n".join(source[name].instructions)
-        if "wait 1 gpio 20 side 4 [3]" not in raw:
-            fail(f"{name} no longer enables ROM1 only while DATA_DIR is outward")
-        if "side 5 [3]" not in raw:
-            fail(f"{name} no longer disables ROM1 before restoring the listening direction")
-
-def test_irq_contract(pio_text: str) -> None:
-    required_pio = ["irq wait 1", "irq 2", "irq 0 side 1"]
-    for token in required_pio:
-        if token not in pio_text:
-            fail(f"PIO IRQ contract is missing {token}")
 
 def main() -> None:
     pio_text = PIO.read_text()
     if ".pio_version 1" not in pio_text:
         fail("RP2350 PIO source must declare .pio_version 1")
     programs = parse_programs(pio_text)
+    test_pin_map()
     test_instruction_ram(programs)
-    test_set_immediates_are_encodable(programs)
-    test_jump_targets_resolve(pio_text)
-    test_source_driven_routes(pio_text)
-    test_read_drive_qualification(pio_text)
-    test_write_capture()
-    test_special_bank_decode(pio_text)
-    test_selector_decode()
-    test_frontend_coverage()
-    test_read_response_word()
-    test_wait_gpio_windows(programs)
-    test_pio_wait_pins(programs)
-    test_cmake_board_setup()
-    test_cpp_pio_setup()
-    test_listening_state(pio_text)
-    test_irq_contract(pio_text)
+    test_input_strobes(programs)
+    test_pio_source_contract(pio_text)
+    test_cpp_setup()
+    test_layout_and_response()
+    test_cmake()
     print("pio_static_tests: PASS")
+
 
 if __name__ == "__main__":
     main()

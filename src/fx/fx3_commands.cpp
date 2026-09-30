@@ -57,21 +57,35 @@ void SuperFx::process_fx3_command() {
 // but do reset prefix flags. Snes9x's implementation clears them.
 void SuperFx::op_merge() {
     if (config_.chip == FxChip::FX3) {
-        process_fx3_command();
+        if (state_.flags.alt1) {
+            // FX3 keeps the original GSU MERGE operation behind ALT1 so an
+            // FX3-aware program can still use the legacy byte-combine primitive.
+            // Randy sends his regards: he wishes he would had kept MERGE original and used ALT1+MERGE for FX3 behavior.
+            const uint16_t value = (state_.r[7] & 0xFF00) | (state_.r[8] >> 8);
+
+            write_dst(value);
+
+            state_.flags.carry = (value & 0xE0E0) != 0;
+            state_.flags.overflow = (value & 0xC0C0) != 0;
+            state_.flags.sign = (value & 0x8080) != 0;
+            state_.flags.zero = (value & 0xF0F0) != 0;
+        } else {
+            process_fx3_command();
+        }
 
         reset_prefix();
         return;
-    } else {
-        // Normal GSU1 / GSU2 MERGE.
-        const uint16_t value = (state_.r[7] & 0xFF00) | (state_.r[8] >> 8);
-
-        write_dst(value);
-
-        state_.flags.carry = (value & 0xE0E0) != 0;
-        state_.flags.overflow = (value & 0xC0C0) != 0;
-        state_.flags.sign = (value & 0x8080) != 0;
-        state_.flags.zero = (value & 0xF0F0) != 0;
-
-        reset_prefix();
     }
+
+    // Normal GSU1 / GSU2 MERGE.
+    const uint16_t value = (state_.r[7] & 0xFF00) | (state_.r[8] >> 8);
+
+    write_dst(value);
+
+    state_.flags.carry = (value & 0xE0E0) != 0;
+    state_.flags.overflow = (value & 0xC0C0) != 0;
+    state_.flags.sign = (value & 0x8080) != 0;
+    state_.flags.zero = (value & 0xF0F0) != 0;
+
+    reset_prefix();
 }

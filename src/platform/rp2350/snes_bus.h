@@ -19,8 +19,14 @@ void snes_bus_init();
 void snes_bus_start(SuperFx& fx);
 /// Services reset, ROM ownership, and core-1 requests for exclusive physical bus access.
 void snes_bus_service();
+/// True only while /SNES_PRES is deasserted and the translated console bus is isolated.
+bool snes_bus_usb_mode();
+/// True while translators isolate the console, including the boot-time ROM probe.
+bool snes_bus_local_mode();
 
 /// Requests temporary physical-ROM bus ownership and reads one byte for legacy GSU1/2.
 uint8_t snes_rom_read(void* context, uint32_t address);
-/// Drives the active-low SNES cartridge IRQ input.
+/// Drives active-low /O_IRQ; also serves as the QSPI save busy-IRQ callback.
 void snes_irq_write(void* context, bool asserted);
+/// ORs storage busy with the FX core IRQ, so one owner cannot release another's IRQ.
+void snes_busy_irq_write(void* context, bool asserted);
