@@ -26,7 +26,7 @@ bool snes_bus_local_mode();
 
 /// Requests temporary physical-ROM bus ownership and reads one byte for legacy GSU1/2.
 uint8_t snes_rom_read(void* context, uint32_t address);
-/// Drives active-low /O_IRQ; also serves as the QSPI save busy-IRQ callback.
+/// Drives active-low /O_IRQ for GSU completion.
 void snes_irq_write(void* context, bool asserted);
-/// ORs storage busy with the FX core IRQ, so one owner cannot release another's IRQ.
+/// Standalone USB parallel-ROM busy owner only; QSPI saves never call this.
 void snes_busy_irq_write(void* context, bool asserted);

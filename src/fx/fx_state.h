@@ -22,6 +22,7 @@ struct FxConfig {
     FxChip chip;                       ///< SuperFX hardware revision being emulated.
     FxTiming timing;                   ///< Timing model used by the execution core.
     uint8_t max_program_rom_bank;      ///< Highest ROM bank available for program execution ($6F is PDF-defined for FX3).
+    bool fx3_completion_irq = false;   ///< Optional legacy completion IRQ in FX3 mode; official FX3 polls R15.
 };
 
 extern const FxConfig fx1_config;      ///< SuperFX1 configuration
@@ -64,6 +65,7 @@ struct FxState {
     uint8_t rom_bank;                  ///< ROM bank used by buffered R14 reads.
     uint8_t ram_bank;                  ///< RAM bank used by GSU memory operations.
 
+    bool save_failed;                  ///< SAVE_AND_STOP failed; stopped without publishing successful completion.
     bool irq_disabled;                 ///< Prevents STOP from asserting the external GSU IRQ.
     bool high_speed;                   ///< Selects the GSU high-speed operating mode.
     bool clock_select;                 ///< Selects the GSU memory-access timing rate.

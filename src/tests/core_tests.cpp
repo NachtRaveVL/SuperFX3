@@ -89,7 +89,7 @@ static void test_register_start_and_mapping() {
     test_require(fx.cpu_read(0x701E) == 0x34 && fx.cpu_read(0x701F) == 0x12,
                  "FX3 R15 polling did not use the alternate register mapping");
 
-    fx.op_stop();
+    fx.execute_opcode(0x00);
     fx.state_.r[0] = 0x55AA;
     fx.cpu_write(0x7300, 0x11);
     fx.cpu_write(0x7301, 0x22);

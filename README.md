@@ -40,7 +40,7 @@ Hardware is currently in prototype phase and work continues on hardware validati
   * FX3 MERGE C2P commands are skipped because PLOT writeback already produces planar data
   * FX3 MERGE clear commands remain supported
   * `ALT1; MERGE` retains the original GSU MERGE operation
-  * `ALT2; MERGE` is reserved; `ALT3; MERGE` is reserved for NR-RetroWorks extensions (e.g. live saving)
+  * `ALT3; STOP` is terminal SAVE_AND_STOP, with completion only after durable QSPI save
 * FX3 register access, RESET, STOP/GO, and cross-core synchronization
 * Legacy GSU IRQ behavior for FX1/FX2 compatibility
 * FX3 completion by R15 polling
@@ -224,13 +224,15 @@ python3 src/tools/make_fx3_qspi_image.py \
     build/superfx3_qspi.bin
 ```
 
-The tool requires the exact 4 MiB production device and fixed offsets, checks the 512 KiB firmware limit and 3 MiB FX-code limit, and rejects every alternative partition placement. The save partition and unused FX-code space are emitted as `0xFF`.
+The tool enforces the fixed 4 MiB QSPI layout: 512 KiB firmware, 512 KiB saves, and 3 MiB FX code. Save and unused FX-code space are filled with `0xFF`.
 
-The journal stores complete 128 KiB SRAM snapshots only in QSPI offsets `0x080000-0x0FFFFF`. Each 132 KiB slot has a 256-byte header, 128 KiB payload, and sector-alignment padding. It writes payload first and commits the `SFX3`/`CMIT` header last. Boot scans all three slots and restores the newest committed, CRC-valid record. When full, it erases only the next slot, retaining the latest valid save even if the replacement fails. Earlier `SXF3`-spelled headers remain readable.
+The save journal holds three 132 KiB slots, each containing a header and complete 128 KiB SRAM snapshot. Payload is written first, with the `SFX3`/`CMIT` header committed last. Boot restores the newest CRC-valid record. Reusing a slot preserves the latest valid save until its replacement succeeds.
 
-The RP2350 wrapper now restores SRAM before bus startup and saves changed snapshots on console reset, or on SNES disconnect while USB power remains. It extends an already-asserted console reset through the save. Pico SDK `flash_safe_execute` holds core 1 and disables interrupts across snapshot capture and commit. `/O_IRQ` remains asserted throughout erase/program/commit; storage busy and the FX core IRQ are independent owners of the output. Firmware and FX-code partitions are never written by this path.
+`ALT3; STOP` drains pending memory activity, stops the GSU, and saves from Core 1 while Core 0 is parked. Only SRAM/ROM-safe code executes while XIP is unavailable. After verification, XIP and Core 0 resume, R15 becomes zero, and the GSU stays stopped. Official FX3 uses R15 polling; compatibility profiles may assert a completion IRQ. Saves require no busy IRQ, USB connection, or save-and-continue behavior.
 
-**Press reset and allow the save to finish before removing power.** Sudden power loss cannot initiate a reliable save without hold-up power. The journal holds one cartridge-wide SRAM image, not separate save slots keyed to different uploaded games. Target hardware validation remains required.
+Failure leaves the GSU stopped with nonzero R15 and no new completion IRQ. Firmware exposes the result through `save_failed` and `qspi_save_last_ok()`; guest software should use a timeout and explicitly restart after recovery. Reset/disconnect saves remain serialized fallbacks. Saves never modify firmware, FX code, or parallel ROM.
+
+**Wait for save completion before removing power.** Sudden power loss cannot trigger a reliable save. The journal stores one cartridge-wide SRAM image, without per-game slots.
 
 ---
 
@@ -284,18 +286,16 @@ Path | Description
 
 # Current Status
 
-The host/static suite and strict host production link are the automated checks for this pass. PIO source also assembles with SDK 2.3.1 pioasm. A fresh ARM firmware build and board timing validation remain required; host stubs do not establish either.
-
 Remaining hardware work includes:
 
 * Real SNES bus timing and logic analyzer verification
 * PIO timing under cartridge load
 * Cross-core queue depth and worst-case service latency
-* Real-board reset/disconnect saves, USB host compatibility, programming time, and a future live-game save handshake
+* Real-board SAVE_AND_STOP/reset/disconnect saves, Core-0 lockout latency, SNES bus behavior during lockout, USB host compatibility, and programming time
 * Final FX3 behavior checks against hardware and trusted traces
 * Legacy GSU1/GSU2 timing if those modes remain supported
 
-Expect things to move around during hardware bring-up.
+Expect things to move around during hardware validation.
 
 ---
 

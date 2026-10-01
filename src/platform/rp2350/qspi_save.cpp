@@ -12,6 +12,10 @@
 
 #include <cstring>
 
+#if PICO_FLASH_ASSUME_CORE0_SAFE || PICO_FLASH_ASSUME_CORE1_SAFE
+#error "QSPI saves require SDK lockout on both cores"
+#endif
+
 namespace {
 std::atomic<uint8_t>* g_ram = nullptr;
 alignas(4) uint8_t g_snapshot[fx3_save::PAYLOAD_SIZE];
@@ -19,7 +23,9 @@ uint32_t g_saved_crc = 0;
 bool g_last_usb = false;
 bool g_last_reset = false;
 bool g_safe = false;
-bool g_ok = true;
+std::atomic<bool> g_ok {true};
+std::atomic_flag g_saving = ATOMIC_FLAG_INIT;
+bool g_have_save = false;
 
 bool save_range(uint32_t offset, uint32_t size, uint32_t alignment) {
     return g_safe && offset >= fx3_qspi::SAVE_OFFSET &&
@@ -28,7 +34,7 @@ bool save_range(uint32_t offset, uint32_t size, uint32_t alignment) {
         (offset % alignment) == 0 && (size % alignment) == 0;
 }
 
-bool erase(void*, uint32_t offset, uint32_t size) {
+bool __not_in_flash_func(erase)(void*, uint32_t offset, uint32_t size) {
     if (!save_range(offset, size, FLASH_SECTOR_SIZE))
         return false;
     flash_range_erase(offset, size);
@@ -40,7 +46,7 @@ bool erase(void*, uint32_t offset, uint32_t size) {
     return true;
 }
 
-bool program(void*, uint32_t offset, const uint8_t* data, uint32_t size) {
+bool __not_in_flash_func(program)(void*, uint32_t offset, const uint8_t* data, uint32_t size) {
     if (!data || !save_range(offset, size, FLASH_PAGE_SIZE))
         return false;
     // The SDK restores XIP before returning; all input pages reside in SRAM.
@@ -50,20 +56,25 @@ bool program(void*, uint32_t offset, const uint8_t* data, uint32_t size) {
 
 fx3_save::QspiFlash flash() {
     return {nullptr, reinterpret_cast<const uint8_t*>(XIP_BASE), fx3_qspi::FLASH_SIZE,
-            erase, program, snes_busy_irq_write};
+            erase, program};
 }
 
 void save_snapshot(void*) {
-    // flash_safe_execute holds core 1 and disables core-0 interrupts across
-    // snapshot capture AND commit. No concurrent CPU/GSU SRAM mutation is possible.
+    // flash_safe_execute parks the OTHER core and disables local interrupts
+    // through snapshot capture, commit and verification. Both cores register
+    // SDK lockout victims. Only SDK SRAM/ROM routines run while XIP is disabled;
+    // flash_range_* restores XIP before returning to journal code or verification.
+    // PIO/DMA must not access QSPI or mutate g_ram independently during this call.
     g_safe = true;
     for (uint32_t i = 0; i < sizeof(g_snapshot); ++i)
         g_snapshot[i] = g_ram[i].load(std::memory_order_relaxed);
     const uint32_t crc = fx3_save::crc32(g_snapshot, sizeof(g_snapshot));
-    if (crc != g_saved_crc) {
+    if (!g_have_save || crc != g_saved_crc) {
         g_ok = fx3_save::append(flash(), g_snapshot, sizeof(g_snapshot));
-        if (g_ok)
+        if (g_ok) {
             g_saved_crc = crc;
+            g_have_save = true;
+        }
     }
     g_safe = false;
 }
@@ -71,7 +82,8 @@ void save_snapshot(void*) {
 
 void qspi_save_init(std::atomic<uint8_t>* ram) {
     g_ram = ram;
-    if (fx3_save::restore(flash(), g_snapshot, sizeof(g_snapshot))) {
+    g_have_save = fx3_save::restore(flash(), g_snapshot, sizeof(g_snapshot));
+    if (g_have_save) {
         for (uint32_t i = 0; i < sizeof(g_snapshot); ++i)
             ram[i].store(g_snapshot[i], std::memory_order_relaxed);
     } else {
@@ -82,6 +94,19 @@ void qspi_save_init(std::atomic<uint8_t>* ram) {
     g_last_usb = gpio_get(SNES_PRES_N_PIN);
     g_last_reset = false;
     g_ok = true;
+}
+
+bool qspi_save_now(void*) {
+    // Reset/disconnect fallback runs on core 0; the instruction runs on core 1.
+    // Never wait for the other writer while it may be requesting our lockout.
+    if (!g_ram || g_saving.test_and_set(std::memory_order_acquire))
+        return false;
+    g_ok = true;
+    if (flash_safe_execute(save_snapshot, nullptr, 1000) != PICO_OK)
+        g_ok = false;
+    const bool ok = g_ok.load();
+    g_saving.clear(std::memory_order_release);
+    return ok;
 }
 
 void qspi_save_task() {
@@ -101,9 +126,7 @@ void qspi_save_task() {
         gpio_put(SNES_O_RESET_N_PIN, 0);
         snes_pio_pause();
     }
-    g_ok = true;
-    if (flash_safe_execute(save_snapshot, nullptr, 1000) != PICO_OK)
-        g_ok = false;
+    qspi_save_now(nullptr);
     if (!usb) {
         snes_pio_resume();
         gpio_put(SNES_O_RESET_N_PIN, 1);

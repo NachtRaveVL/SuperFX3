@@ -34,6 +34,17 @@ def main() -> None:
     require(save, "fx3_qspi::SAVE_SIZE", "save journal is not bounded to QSPI save space")
     reject(save, "ParallelRom", "save journal references the external parallel ROM")
 
+    reject(save_header, "set_busy_irq", "QSPI journal exposes a busy-IRQ API")
+    wrapper = (ROOT / "platform/rp2350/qspi_save.cpp").read_text()
+    reject(wrapper, "snes_busy_irq_write", "QSPI saves signal busy IRQ")
+    require(wrapper, "flash_safe_execute(save_snapshot", "save bypasses SDK core lockout")
+    require(wrapper, "PICO_FLASH_ASSUME_CORE0_SAFE || PICO_FLASH_ASSUME_CORE1_SAFE",
+            "save permits an unproven core-safe SDK override")
+    main_source = (ROOT / "main.cpp").read_text()
+    if main_source.count("flash_safe_execute_core_init()") != 2:
+        raise AssertionError("both cores must register SDK lockout victims")
+    require(main_source, "backend.save = qspi_save_now", "SAVE backend is disconnected")
+
     installer = (ROOT / "storage" / "snes_rom_installer.cpp").read_text()
     require(installer, "parallel_rom_", "game installer target is not named as parallel ROM")
     require(installer, "ParallelRomProgrammer::CAPACITY",

@@ -80,6 +80,7 @@ int main() {
     qspi_save_init(g_ram);
 
     FxBackend backend = fx_backend_create(&g_fx_backend_context);
+    backend.save = qspi_save_now;
 
     fx.init(fx3_config, backend);
     fx_sync_init(fx, backend);
@@ -88,6 +89,10 @@ int main() {
     usb_rom_loader_init();
     usb_rom_loader_set_enabled(snes_bus_usb_mode());
 
+    // Core 1 may write QSPI during SAVE_AND_STOP. Core 0 must participate in
+    // SDK lockout too; its ordinary bus-service path is not XIP-independent.
+    if (!flash_safe_execute_core_init())
+        panic("Unable to initialize core-0 flash safety");
     multicore_launch_core1(core1_main);
     while (!g_core1_ready.load(std::memory_order_acquire))
         tight_loop_contents();

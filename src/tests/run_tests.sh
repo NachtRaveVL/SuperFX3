@@ -133,6 +133,13 @@ build_qspi_save_integration_tests() {
         -o "$BUILD/qspi_save_integration_tests"
 }
 
+build_save_stop_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
+        -DSDK_TEST_FLASH_EMULATION tests/save_stop_tests.cpp "${CORE_SOURCES[@]}" \
+        platform/rp2350/qspi_save.cpp storage/fx3_save_journal.cpp \
+        -o "$BUILD/save_stop_tests"
+}
+
 build_parallel_rom_programmer_tests() {
     "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${CORE_INCLUDES[@]}" \
         tests/parallel_rom_programmer_tests.cpp storage/parallel_rom_programmer.cpp \
@@ -214,6 +221,8 @@ run_stage "CXX save_journal_tests" build_save_journal_tests
 run_stage "RUN save_journal_tests" "$BUILD/save_journal_tests"
 run_stage "CXX QSPI save integration" build_qspi_save_integration_tests
 run_stage "RUN QSPI save integration" "$BUILD/qspi_save_integration_tests"
+run_stage "CXX SAVE_AND_STOP integration" build_save_stop_tests
+run_stage "RUN SAVE_AND_STOP integration" "$BUILD/save_stop_tests"
 run_stage "CXX parallel_rom_programmer" build_parallel_rom_programmer_tests
 run_stage "RUN parallel_rom_programmer" "$BUILD/parallel_rom_programmer_tests"
 run_stage "CXX SNES ROM layout" build_snes_rom_layout_tests

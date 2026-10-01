@@ -9,7 +9,7 @@
 - `bus_integration_tests.cpp` runs the real SNES bus, routed-bit helpers, PIO frontend, sync layer, and FX core against stateful GPIO/PIO/DMA/IRQ stubs. It injects captured writes, reads, reset interrupts, single-ROM physical transactions, pause/resume, console-presence transitions, local `/I_RST` ownership, input-only `/I_RD`/`/I_WR`, and `/O_IRQ` behavior.
 - `sync_tests.cpp` exercises the cross-core command queue, snapshots, reset retry, STOP handoff, IRQ acknowledgement, queue-full behavior, and legacy GSU ownership notifications without RP2350 hardware.
 - `register_backend_tests.cpp` covers register read/write side effects and the host-testable RP2350 backend callbacks and bounds checks.
-- `save_journal_tests.cpp` covers empty media, append/restore ordering, CRC fallback, interrupted uncommitted slots, flash failures, erase-on-wrap behavior, and `/O_IRQ` bracketing for every 128 KiB QSPI write window.
+- `save_journal_tests.cpp` covers empty media, append/restore ordering, CRC fallback, interrupted uncommitted slots, flash failures, erase-on-wrap behavior, destination-slot preservation, and finalized header validation. The journal has no IRQ API.
 - `pio_static_tests.py` checks the exact routed production pin map, PIO instruction-memory use, encodable `SET` immediates, input-strobe WAIT GPIOs, DMA bridge endpoints, single-ROM controls, C++/PIO contracts, and custom-board CMake setup.
 - `packer_tests.py` verifies the fixed 4 MiB W25Q32 firmware/save/FX-code layout, erased journal region, padding, and rejection of alternate sizes or offsets.
 - `storage_separation_tests.py` prevents the QSPI save journal and external parallel game-ROM installer from referencing each other's storage paths.
@@ -20,6 +20,7 @@
 - `usb_rom_volume_tests.cpp` exercises the generated FAT16 boot sector, mapped and raw upload types, cluster-to-file mapping, completion tracking, and MSC readback.
 - `usb_block_order_tests.cpp` covers data-before-directory/FAT, growing files, cache flush versus eject, fragmented chains, incomplete/cyclic chains, and staging bounds.
 - `snes_rom_installer_tests.cpp` uses a command-aware NOR emulator for a fragmented headered 32 KiB image, zero-to-one sector rewrites, all 128 Mbit of raw capacity, busy-owner rejection, and cancellation between writes.
+- `save_stop_tests.cpp` runs ALT3+STOP through the core and production QSPI wrapper against emulated flash, covering retired RAM/plot writes, parked-core snapshot/commit, completion ordering, no busy IRQ, failure/retry, exact instruction gating, and prefix cleanup. The SDK model does not prove physical multicore or bus timing.
 - `qspi_save_integration_tests.cpp` runs the production save wrapper with emulated SDK flash safety and storage, checking reset/disconnect triggers, unchanged-save suppression, boot restore, failure cleanup, and partition bounds.
 - Journal regressions retain the prior save after a failed wrap and check `SFX3` byte order plus legacy compatibility. Bus tests check every mapped 8 MiB extended-ROM source page has a readable alias and verify independent core/storage IRQ ownership.
 

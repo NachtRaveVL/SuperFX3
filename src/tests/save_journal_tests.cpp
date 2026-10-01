@@ -11,14 +11,10 @@ struct TestFlash {
     uint32_t erase_count = 0;
     bool fail_program = false;
     bool fail_erase = false;
-    bool busy_irq = false;
-    uint32_t busy_assert_count = 0;
-    uint32_t busy_release_count = 0;
 };
 
 static bool erase_flash(void* context, uint32_t offset, uint32_t size) {
     auto& flash = *static_cast<TestFlash*>(context);
-    test_require(flash.busy_irq, "QSPI erase ran without /O_IRQ asserted");
     if (flash.fail_erase ||
         (offset & (fx3_qspi::FLASH_SECTOR_SIZE - 1u)) ||
         (size & (fx3_qspi::FLASH_SECTOR_SIZE - 1u)) ||
@@ -33,7 +29,6 @@ static bool erase_flash(void* context, uint32_t offset, uint32_t size) {
 
 static bool program_flash(void* context, uint32_t offset, const uint8_t* data, uint32_t size) {
     auto& flash = *static_cast<TestFlash*>(context);
-    test_require(flash.busy_irq, "QSPI program ran without /O_IRQ asserted");
     if (flash.fail_program || !data ||
         (offset & (fx3_qspi::FLASH_PAGE_SIZE - 1u)) ||
         (size & (fx3_qspi::FLASH_PAGE_SIZE - 1u)) ||
@@ -49,19 +44,10 @@ static bool program_flash(void* context, uint32_t offset, const uint8_t* data, u
     return true;
 }
 
-static void set_busy_irq(void* context, bool asserted) {
-    auto& flash = *static_cast<TestFlash*>(context);
-    flash.busy_irq = asserted;
-    if (asserted)
-        ++flash.busy_assert_count;
-    else
-        ++flash.busy_release_count;
-}
-
 static fx3_save::QspiFlash make_flash(TestFlash& storage) {
     return fx3_save::QspiFlash{
         &storage, storage.bytes.data(), static_cast<uint32_t>(storage.bytes.size()),
-        erase_flash, program_flash, set_busy_irq
+        erase_flash, program_flash
     };
 }
 
@@ -82,8 +68,6 @@ static void test_empty_and_input_validation() {
                  "erased journal restored nonexistent data");
     test_require(!fx3_save::append(flash, output.data(), output.size() - 1),
                  "journal accepted the wrong snapshot size");
-    test_require(!storage.busy_irq && storage.busy_assert_count == 0,
-                 "invalid append toggled /O_IRQ");
     test_require(fx3_save::crc32(reinterpret_cast<const uint8_t*>("123456789"), 9) == 0xCBF43926u,
                  "journal CRC-32 does not match the standard check vector");
 }
@@ -104,9 +88,6 @@ static void test_append_restore_and_crc_fallback() {
                  "second journal append failed");
     test_require(record.sequence == 1 && record.slot == 1,
                  "second journal record metadata is wrong");
-    test_require(!storage.busy_irq && storage.busy_assert_count == 2 &&
-                     storage.busy_release_count == 2,
-                 "successful appends did not bracket QSPI writes with /O_IRQ");
 
     test_require(fx3_save::restore(flash, output.data(), output.size(), &record),
                  "latest journal restore failed");
@@ -137,14 +118,9 @@ static void test_interrupted_slot_and_wrap_erase() {
     // Model power loss after payload programming but before the commit header.
     const uint32_t dirty_payload = fx3_qspi::SAVE_OFFSET + fx3_save::SLOT_SIZE +
                                    fx3_save::HEADER_SIZE;
-    set_busy_irq(&storage, true);
     test_require(program_flash(&storage, dirty_payload, data1.data(),
                                static_cast<uint32_t>(data1.size())),
                  "failed to construct interrupted journal slot");
-    set_busy_irq(&storage, false);
-    // The manual interrupted-write setup is not an append operation.
-    storage.busy_assert_count = 0;
-    storage.busy_release_count = 0;
 
     test_require(fx3_save::append(flash, data2.data(), data2.size(), &record),
                  "append after interrupted slot failed");
@@ -155,9 +131,6 @@ static void test_interrupted_slot_and_wrap_erase() {
                  "journal wrap append failed");
     test_require(storage.erase_count == 1 && record.slot == 0 && record.sequence == 2,
                  "journal did not erase exactly once on wrap");
-    test_require(!storage.busy_irq && storage.busy_assert_count == 2 &&
-                     storage.busy_release_count == 2,
-                 "wrap erase/program did not hold and release /O_IRQ exactly once");
 
     std::vector<uint8_t> output(fx3_save::PAYLOAD_SIZE);
     test_require(fx3_save::restore(flash, output.data(), output.size(), &record) && output == data3,
@@ -174,9 +147,6 @@ static void test_callback_failure() {
                  "journal ignored a flash-program failure");
     test_require(!fx3_save::scan(flash).valid,
                  "failed program created a committed journal record");
-    test_require(!storage.busy_irq && storage.busy_assert_count == 1 &&
-                     storage.busy_release_count == 1,
-                 "program failure left /O_IRQ asserted");
 
     storage.fail_program = false;
     std::fill(storage.bytes.begin() + fx3_qspi::SAVE_OFFSET,
@@ -184,9 +154,6 @@ static void test_callback_failure() {
     storage.fail_erase = true;
     test_require(!fx3_save::append(flash, data.data(), data.size()),
                  "journal ignored a flash-erase failure");
-    test_require(!storage.busy_irq && storage.busy_assert_count == 2 &&
-                     storage.busy_release_count == 2,
-                 "erase failure left /O_IRQ asserted");
 }
 
 static void test_failed_wrap_preserves_latest() {
@@ -204,16 +171,16 @@ static void test_failed_wrap_preserves_latest() {
     test_require(!fx3_save::append(flash, data.data(), data.size()), "failed wrap accepted");
     const auto retained = fx3_save::scan(flash);
     test_require(retained.valid && retained.slot == previous.slot &&
-                     retained.sequence == previous.sequence && !storage.busy_irq,
-                 "failed wrap destroyed the last committed save or held IRQ");
+                     retained.sequence == previous.sequence,
+                 "failed wrap destroyed the last committed save");
     storage.fail_program = false;
     test_require(fx3_save::append(flash, data.data(), data.size()), "retry after failed wrap failed");
-    // The legacy misspelling remains readable, while all new records use SFX3.
+    // Only the finalized SFX3 signature is valid. Reject the earlier misspelling.
     const auto latest = fx3_save::scan(flash);
     const uint32_t address = fx3_qspi::SAVE_OFFSET + latest.slot * fx3_save::SLOT_SIZE;
     storage.bytes[address + 1] = 'X';
     storage.bytes[address + 2] = 'F';
-    test_require(fx3_save::scan(flash).sequence == latest.sequence, "legacy save no longer readable");
+    test_require(fx3_save::scan(flash).sequence != latest.sequence, "misspelled signature accepted");
 }
 
 int main() {

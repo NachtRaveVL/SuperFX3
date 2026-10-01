@@ -23,6 +23,7 @@ struct FxBackend {
 
     void (*ram_write)(void* context, uint32_t address, uint8_t value); ///< Writes CPU-visible FX SRAM.
     void (*set_irq)(void* context, bool asserted);           ///< Callback used to assert or release the GSU IRQ line.
+    bool (*save)(void* context) = nullptr;                  ///< Synchronously persists SRAM; returns after XIP and core lockout are restored.
 };
 
 class SuperFx {

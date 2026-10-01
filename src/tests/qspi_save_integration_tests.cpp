@@ -8,18 +8,18 @@
 #include "../storage/fx3_save_journal.h"
 
 static bool usb = false;
-static bool busy = false;
+
 static unsigned pauses = 0, resumes = 0;
 bool snes_bus_usb_mode() { return usb; }
-void snes_busy_irq_write(void*, bool asserted) { busy = asserted; }
+
 void snes_pio_pause() { ++pauses; }
 void snes_pio_resume() { ++resumes; }
-static void check_busy() { test_require(busy, "QSPI mutation without busy IRQ"); }
+static void check_mutation() { test_require(sdk_flash::safe, "QSPI mutation without core lockout"); }
 
 int main() {
     static std::atomic<uint8_t> ram[fx3_save::PAYLOAD_SIZE]{};
     sdk_flash::bytes.fill(0xFF);
-    sdk_flash::check_busy = check_busy;
+    sdk_flash::check_mutation = check_mutation;
     sdk_test::reset_hardware();
     sdk_test::set_gpio_level(SNES_PRES_N_PIN, false);
     sdk_test::set_gpio_level(SNES_I_RESET_N_PIN, true);
@@ -29,7 +29,7 @@ int main() {
     test_require(!sdk_flash::programs, "live game was paused to save");
     sdk_test::set_gpio_level(SNES_I_RESET_N_PIN, false);
     qspi_save_task();
-    test_require(qspi_save_last_ok() && sdk_flash::programs == 2 && !busy && pauses == resumes,
+    test_require(qspi_save_last_ok() && sdk_flash::programs == 2 && pauses == resumes,
                  "reset did not commit and release resources");
     qspi_save_task();
     test_require(sdk_flash::programs == 2, "held reset repeatedly wore flash");
@@ -40,7 +40,7 @@ int main() {
     ram[42].store(0x99);
     sdk_flash::fail_enter = true;
     qspi_save_task();
-    test_require(!qspi_save_last_ok() && !busy && pauses == resumes && sdk_flash::programs == 2,
+    test_require(!qspi_save_last_ok() && pauses == resumes && sdk_flash::programs == 2,
                  "flash-safety failure was not handled");
     sdk_flash::fail_enter = false;
     sdk_test::set_gpio_level(SNES_I_RESET_N_PIN, true);
@@ -53,7 +53,7 @@ int main() {
     usb = true;
     sdk_test::set_gpio_level(SNES_PRES_N_PIN, true);
     qspi_save_task();
-    test_require(qspi_save_last_ok() && sdk_flash::programs == 6 && !busy,
+    test_require(qspi_save_last_ok() && sdk_flash::programs == 6,
                  "USB-powered console disconnect did not save");
     ram[100].store(0);
     qspi_save_init(ram);

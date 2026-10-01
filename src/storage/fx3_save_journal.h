@@ -34,7 +34,6 @@ struct QspiFlash {
     bool (*erase)(void* context, uint32_t offset, uint32_t size); ///< Erases aligned sectors.
     bool (*program)(void* context, uint32_t offset, const uint8_t* data,
                     uint32_t size);        ///< Programs aligned whole pages.
-    void (*set_busy_irq)(void* context, bool asserted); ///< Drives /O_IRQ for the write window.
 };
 
 struct Record {

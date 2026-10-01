@@ -86,23 +86,6 @@ bool slot_erased(const QspiFlash& flash, uint32_t slot) {
     return range_valid(flash, offset, SLOT_SIZE) && erased(flash.bytes + offset, SLOT_SIZE);
 }
 
-class BusyIrqGuard {
-public:
-    explicit BusyIrqGuard(const QspiFlash& flash) : flash_(flash) {
-        flash_.set_busy_irq(flash_.context, true);
-    }
-
-    ~BusyIrqGuard() {
-        flash_.set_busy_irq(flash_.context, false);
-    }
-
-    BusyIrqGuard(const BusyIrqGuard&) = delete;
-    BusyIrqGuard& operator=(const BusyIrqGuard&) = delete;
-
-private:
-    const QspiFlash& flash_;
-};
-
 } // namespace
 
 uint32_t crc32(const uint8_t* data, size_t size) {
@@ -151,7 +134,6 @@ bool restore(const QspiFlash& flash, uint8_t* destination, size_t destination_si
 bool append(const QspiFlash& flash, const uint8_t* snapshot, size_t snapshot_size,
             Record* written_record) {
     if (!snapshot || snapshot_size != PAYLOAD_SIZE || !flash.erase || !flash.program ||
-        !flash.set_busy_irq ||
         !range_valid(flash, fx3_qspi::SAVE_OFFSET, fx3_qspi::SAVE_SIZE)) {
         return false;
     }
@@ -167,10 +149,6 @@ bool append(const QspiFlash& flash, const uint8_t* snapshot, size_t snapshot_siz
             break;
         }
     }
-
-    // From the first possible erase/program operation through the commit page,
-    // keep /O_IRQ asserted. RAII guarantees release on every failure return.
-    BusyIrqGuard busy_irq(flash);
 
     if (target_slot == SLOT_COUNT) {
         // Reclaim only the next slot, never the newest committed snapshot.
