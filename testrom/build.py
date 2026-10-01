@@ -30,6 +30,14 @@ def run(command: list[str], cwd: Path = ROOT) -> None:
     subprocess.run(command, cwd=cwd, check=True)
 
 
+def color_status(result: str, stream) -> str:
+    if stream.isatty() and not os.environ.get("NO_COLOR") and \
+            os.environ.get("TERM", "dumb") != "dumb":
+        color = "\033[32m" if result == "PASS" else "\033[31m"
+        return f"{color}{result}\033[0m"
+    return result
+
+
 def find_cc65_tool(name: str) -> str:
     candidates: list[Path] = []
     for env_name in ("CC65_HOME", "CC65_PATH"):
@@ -316,10 +324,21 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     build_dir = args.build_dir.resolve()
-    generate_sources(build_dir)
+
+    try:
+        generate_sources(build_dir)
+        if args.check:
+            self_test_build_helpers()
+    except (subprocess.CalledProcessError, SystemExit):
+        if args.check:
+            print(
+                f"Diagnostic ROM source/build-helper checks: {color_status('FAIL', sys.stderr)}",
+                file=sys.stderr,
+            )
+        raise
+
     if args.check:
-        self_test_build_helpers()
-        print("Diagnostic ROM source/build-helper checks: PASS")
+        print(f"Diagnostic ROM source/build-helper checks: {color_status('PASS', sys.stdout)}")
         return 0
 
     ca65 = find_cc65_tool("ca65")
