@@ -25,22 +25,23 @@ Hardware is currently in prototype phase and work continues on hardware validati
 * PIO/interrupt-based SNES bus decoding, read handling, write capture, and control
 * 128 KiB (1 Mbit) of volatile shared cartridge RAM in RP2350 SRAM
   * 2 x 64 KiB banks at `$70:0000` and `$71:0000`
-  * Leaves 392 KiB of RP2350 SRAM for firmware and runtime use
-  * 216x144 visible 8bpp planar framebuffer in bank `$71` (FX3 mode)
+  * Remaining on-chip SRAM is used by firmware, save staging, USB/NOR buffers, and runtime state
+  * Default 216x144 visible 8bpp planar framebuffer in bank `$71`
 * 4 MiB (32 Mbit) RP2350 QSPI flash
   * Lower 496 KiB for firmware
   * 528 KiB append-only SRAM save journal
+    * 4 rotating saves for wear leveling
   * Upper 3 MiB for private FX code and data
 * Separate parallel flash ROM for the SNES CPU
   * One TSOP48/56 device on a single `/ROM_CE` output
   * 8-128 Mbit device capacity with full A0-A23 routing
   * LoROM, HiROM, ExLoROM, ExHiROM, extended SuperFX, and raw bus images
-* FX3 8bpp PLOT/RPIX pixel-cache graphics path with native SNES planar output
+* FX3 2/4/8bpp PLOT/RPIX pixel-cache graphics path with programmable SCBR and native SNES planar output
 * Planar-only framebuffer path with no separate chunky framebuffer
   * FX3 MERGE C2P commands are skipped because PLOT writeback already produces planar data
   * FX3 MERGE clear commands remain supported
   * `ALT1; MERGE` retains the original GSU MERGE operation
-  * `ALT3; STOP` is terminal SAVE_AND_STOP, with completion only after durable QSPI save
+* `ALT3; STOP` is terminal SAVE_AND_STOP (invocated save state), with completion only after durable QSPI save
 * FX3 register access, RESET, STOP/GO, and cross-core synchronization
 * Legacy GSU IRQ behavior for FX1/FX2 compatibility
 * FX3 completion by R15 polling
@@ -60,7 +61,7 @@ The RP2350B splits the work between both cores:
 
 PIO handles the timing-sensitive bus work, including SuperFX address decoding, SNES write capture, read service, and bus-control changes.
 
-Banks `$70-$71` map to 128 KiB of RP2350 SRAM. The planar framebuffer lives in bank `$71`. The FX3 processor reads its private code and data from the upper 3 MiB QSPI partition.
+Banks `$70-$71` map to 128 KiB of RP2350 SRAM. The default planar framebuffer lives in bank `$71`; SCMR and SCBR retain the normal 2/4/8bpp mode and base-selection behavior. The FX3 processor reads its private code and data from the upper 3 MiB QSPI partition.
 
 The QSPI FX-code partition is separate from the SNES game/program ROM. Game ROM data exists only in the external 128-Mbit parallel NOR. The SNES address bus reaches that device directly while PIO controls `/RD`, `/WR`, and `/ROM_CE`. ROM images are arranged for the physical flash layout before programming so normal CPU reads do not require live address remapping.
 
@@ -78,7 +79,7 @@ boards/snes_fx3.h
 
 CMake selects `snes_fx3` automatically and rejects other Pico board definitions.
 
-The production routed map is implemented by the board definition, explicit bit packers, and the three-PIO/DMA front end. [`docs/HARDWARE_PORT.md`](docs/HARDWARE_PORT.md) contains the complete per-bit routing table.
+The production routed map is implemented by the board definition, explicit bit packers, and the three-PIO/DMA front end.
 
 ## Production RP2350B Pin Groups
 
@@ -102,18 +103,20 @@ Signal | RP2350B GPIO | Description
 
 ## External Libraries
 
-SuperFX3 uses the following controller-side libraries:
+SuperFX3 uses the following controller-side library:
 
 * **TinyUSB** for USB device and mass-storage support.
 
-Pico SDK manages library checkout at build time, and does not require a separate installation.
+External libraries are supplied through the Pico SDK checkout. Pico SDK submodules must be initialized when setting up the SDK.
 
 ## Requirements
 
 * Raspberry Pi Pico SDK 2.3.0 or newer
-* ARM GCC toolchain with `arm-none-eabi-gcc` and `arm-none-eabi-g++`
-* CMake
-* Python 3
+* GNU Arm Embedded Toolchain with `arm-none-eabi-gcc`, `arm-none-eabi-g++`, and `arm-none-eabi-size`
+* CMake 3.13 or newer
+* Python 3.10 or newer
+* GNU `g++` for the host/static test suite
+* `gcov` for optional coverage reporting
 * cc65 with `ca65` and `ld65` for the diagnostic ROM
 
 Set `PICO_SDK_PATH` if needed:
@@ -135,7 +138,7 @@ The main linked firmware output is:
 build/superfx3.elf
 ```
 
-The Pico SDK also generates `.bin`, `.hex`, `.uf2`, map, and disassembly outputs. The raw `.bin` is used when creating a combined QSPI image.
+The Pico SDK also generates `.bin`, `.hex`, `.uf2`, map, and disassembly outputs. The raw `.bin` is used when creating a combined QSPI image. The build reports firmware-partition use and static `data+BSS` SRAM use after linking.
 
 ---
 
@@ -205,6 +208,8 @@ Mapped 128-Mbit images carry a 16-byte `S3MP` map descriptor at physical `0x7E00
 
 With the cartridge powered only by USB (which puts `/SNES_PRES` high), the firmware exposes a FAT16 drive named `SUPERFX3`. Copy one LoROM, HiROM, ExLoROM, or ExHiROM `.sfc`/`.smc` source image up to 8 MiB, or a ready-to-flash 16 MiB `.rom`/`.bin` physical bus image, to that drive. Then **safely eject the drive, keeping USB power connected until `/O_IRQ` is released**. Eject finalizes the FAT chain and starts installation; an ordinary cache flush or temporary file size does not. The loader validates mapped SNES headers, constructs the direct 24-bit cartridge-bus image, and programs/verifies the IS29GL128 as required. A safe eject is not yet confirmation that NOR programming has finished.
 
+USB game programming changes only the external parallel NOR. Private GSU/FX code in the RP2350 QSPI FX partition is provisioned separately and is never rewritten by a `.sfc`/`.smc` upload.
+
 Data sectors are retained by physical cluster even when they precede directory or FAT updates. The volume advertises only space that can be staged: 16 MiB of parallel flash plus 16 KiB of temporary SRAM for allocation overhead. Repeated sector writes use a read/modify/erase/program cache. Fragmented chains are reordered without losing unread pages; heavy fragmentation can substantially increase programming time. One ROM per mount is supported. Copying begins a destructive replacement of the previous ROM; disconnecting or losing power partway through requires uploading again. This is not an atomic firmware-update mechanism.
 
 A 512-byte copier header is detected from the file size (`size mod 32 KiB == 512`) and stripped regardless of the filename extension. The loader does not shift an unheadered file merely because it uses `.smc`.
@@ -232,7 +237,7 @@ python3 src/tools/make_fx3_qspi_image.py \
     build/superfx3_qspi.bin
 ```
 
-The tool enforces the fixed 4 MiB QSPI layout: 496 KiB firmware, 528 KiB saves, and 3 MiB FX code. Save and unused FX-code space are filled with `0xFF`.
+The tool enforces the fixed 4 MiB QSPI layout: 496 KiB firmware, 528 KiB saves, and 3 MiB FX code. Save and unused FX-code space are filled with `0xFF`. The private FX-code image is independent of USB programming of the external SNES ROM.
 
 The new save partition starts at `0x07C000`; saves from the previous `0x080000` layout are not automatically migrated.
 
@@ -248,10 +253,10 @@ Failure leaves the GSU stopped with nonzero R15 and no new completion IRQ. Firmw
 
 # Testing
 
-Run the host/static suite from `src`:
+Run the host/static suite from the repository root:
 
 ```bash
-bash tests/run_tests.sh
+bash src/tests/run_tests.sh
 ```
 
 This runs the processor and opcode tests, architectural tests, bus integration simulation, synchronization and backend tests, ROM packing tests, PIO static checks, and strict production-source stub links.
@@ -259,13 +264,13 @@ This runs the processor and opcode tests, architectural tests, bus integration s
 For coverage:
 
 ```bash
-bash tests/run_coverage.sh
+bash src/tests/run_coverage.sh
 ```
 
 The report is written to:
 
 ```text
-build/coverage/coverage_report.txt
+src/build/coverage/coverage_report.txt
 ```
 
 Current coverage gates are:
@@ -286,7 +291,6 @@ Path | Description
 `src/fx/` | SuperFX processor core, opcodes, registers, memory, and graphics
 `src/storage/` | QSPI layout and append-only SRAM save-journal format
 `src/platform/rp2350/` | RP2350 backend, synchronization, SNES bus, PIO, and DMA support
-`docs/HARDWARE_PORT.md` | Routed PCB pin map, PIO/DMA architecture, and console-ownership rules
 `src/tests/` | Host tests, PIO checks, SDK stubs, and coverage tools
 `src/tools/` | ROM and QSPI image utilities
 `testrom/` | SNES FX3 diagnostic ROM and GSU test kernels
@@ -301,6 +305,8 @@ Remaining hardware work includes:
 * Real SNES bus timing and logic analyzer verification
 * PIO timing under cartridge load
 * Cross-core queue depth and worst-case service latency
+* CPU-write ordering and shared-state publication against hardware or trusted traces
+* Production SRAM/linker-map accounting
 * Real-board SAVE_AND_STOP/reset/disconnect saves, Core-0 lockout latency, SNES bus behavior during lockout, USB host compatibility, and programming time
 * Final FX3 behavior checks against hardware and trusted traces
 * Legacy GSU1/GSU2 timing if those modes remain supported

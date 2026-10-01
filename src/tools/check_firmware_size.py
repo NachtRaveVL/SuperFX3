@@ -9,6 +9,8 @@ from pathlib import Path
 
 from make_fx3_qspi_image import FX3_FIRMWARE_SIZE
 
+RP2350_SRAM_SIZE = 520 * 1024
+
 
 def colors() -> tuple[str, str, str, str]:
     if sys.stdout.isatty() and not os.environ.get("NO_COLOR") and \
@@ -19,6 +21,20 @@ def colors() -> tuple[str, str, str, str]:
 
 def format_size(size: int) -> str:
     return f"{size:,} bytes ({size / 1024:.1f} KiB)"
+
+
+def static_ram_size(output: str) -> int | None:
+    for line in reversed(output.splitlines()):
+        fields = line.split()
+        if len(fields) < 6:
+            continue
+        try:
+            data = int(fields[1], 10)
+            bss = int(fields[2], 10)
+        except ValueError:
+            continue
+        return data + bss
+    return None
 
 
 def main() -> int:
@@ -41,6 +57,7 @@ def main() -> int:
     print()
     print("== SuperFX3 firmware sizing ==")
 
+    size_output = ""
     try:
         result = subprocess.run(
             [args.size_tool, str(args.elf)],
@@ -49,12 +66,25 @@ def main() -> int:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        if result.stdout:
-            print(result.stdout.rstrip())
+        size_output = result.stdout
+        if size_output:
+            print(size_output.rstrip())
         if result.returncode != 0 and result.stderr:
             print(result.stderr.rstrip(), file=sys.stderr)
     except OSError as exc:
         print(f"Warning: unable to run {args.size_tool}: {exc}")
+
+    static_ram = static_ram_size(size_output)
+    if static_ram is not None:
+        remaining_ram = RP2350_SRAM_SIZE - static_ram
+        print()
+        print(f"Static data+BSS : {format_size(static_ram)}")
+        print(f"RP2350 SRAM     : {format_size(RP2350_SRAM_SIZE)}")
+        print(f"Static used     : {static_ram * 100.0 / RP2350_SRAM_SIZE:.1f}%")
+        if remaining_ram >= 0:
+            print(f"Static headroom : {format_size(remaining_ram)}")
+        else:
+            print(f"Static overflow : {format_size(-remaining_ram)}")
 
     actual = args.firmware.stat().st_size
     limit = FX3_FIRMWARE_SIZE
