@@ -239,9 +239,7 @@ python3 src/tools/make_fx3_qspi_image.py \
 
 The tool enforces the fixed 4 MiB QSPI layout: 496 KiB firmware, 528 KiB saves, and 3 MiB FX code. Save and unused FX-code space are filled with `0xFF`. The private FX-code image is independent of USB programming of the external SNES ROM.
 
-The new save partition starts at `0x07C000`; saves from the previous `0x080000` layout are not automatically migrated.
-
-The save journal holds four 132 KiB slots, each containing a header and complete 128 KiB SRAM snapshot. Payload is written first, with the `SFX3`/`CMIT` header committed last. Boot restores the newest CRC-valid record. Reusing a slot preserves the latest valid save until its replacement succeeds.
+The save journal, starting at `0x07C000`, holds four 132 KiB slots, each containing a header and complete 128 KiB SRAM snapshot. Payload is written first, with the `SFX3`/`CMIT` header committed last. Boot restores the latest/newest CRC-valid record. Reusing a slot preserves the latest valid save until its replacement succeeds.
 
 `ALT3; STOP` drains pending memory activity, stops the GSU, and saves from Core 1 while Core 0 is parked. Only SRAM/ROM-safe code executes while XIP is unavailable. After verification, XIP and Core 0 resume, R15 becomes zero, and the GSU stays stopped. Official FX3 uses R15 polling; compatibility profiles may assert a completion IRQ. Saves require no busy IRQ, USB connection, or save-and-continue behavior.
 
