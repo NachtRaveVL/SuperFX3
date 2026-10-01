@@ -2,7 +2,7 @@
 
 SuperFX3 FOSS firmware for RP2350B-based SNES cartridges utilizing NR-RetroWorks developed interfacing.
 
-**SuperFX3 Firmware v0.10.0**
+**SuperFX3 Firmware v0.10.1**
 
 This project implements the Super FX / GSU processor family in firmware, with SuperFX3 as the current hardware target. The RP2350B handles the SNES cartridge bus, runs the GSU core, and provides shared RAM plus private FX-code storage.
 

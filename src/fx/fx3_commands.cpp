@@ -54,7 +54,6 @@ void SuperFx::process_fx3_command() {
 // GSU1/2: Normal MERGE instruction.
 // FX3: MERGE is repurposed as the FX3 command interface.
 // Randy confirmed that FX3 commands preserve status flags and consume prefixes.
-// The common instruction dispatcher clears prefixes after the operation returns.
 // ALT2/ALT3 have no assigned MERGE behavior and perform no operation.
 void SuperFx::op_merge() {
     if (config_.chip == FxChip::FX3) {
@@ -74,6 +73,7 @@ void SuperFx::op_merge() {
             process_fx3_command();
         }
 
+        reset_prefix();
         return;
     }
 
@@ -86,4 +86,6 @@ void SuperFx::op_merge() {
     state_.flags.overflow = (value & 0xC0C0) != 0;
     state_.flags.sign = (value & 0x8080) != 0;
     state_.flags.zero = (value & 0xF0F0) != 0;
+
+    reset_prefix();
 }

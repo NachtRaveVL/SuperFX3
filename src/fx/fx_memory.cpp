@@ -65,9 +65,8 @@ uint8_t SuperFx::cpu_rom_read(uint32_t addr) {
 }
 
 uint8_t __not_in_flash_func(SuperFx::cpu_ram_read)(uint32_t addr) {
-    if (!ram_access_allowed()) {
+    if (!ram_access_allowed())
         return 0xFF;
-    }
     if (!backend_.ram_read)
         return 0xFF;
     return backend_.ram_read(backend_.context, addr);

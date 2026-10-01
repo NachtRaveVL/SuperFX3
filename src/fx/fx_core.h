@@ -183,7 +183,7 @@ private:
 
     // Opcodes $00-$3F
 
-    /// Implements STOP, including FX3 completion behavior and the normal GSU IRQ side effect.
+    /// Implements STOP, including FX3 completion, IRQ, and ALT3 save behavior.
     void op_stop();
     /// Implements NOP and clears any pending instruction prefix state.
     void op_nop();
@@ -226,7 +226,7 @@ private:
     void op_add(uint8_t reg);
     /// Implements SUB/SBC/CMP and immediate subtraction forms.
     void op_sub_compare(uint8_t reg);
-    /// Implements normal MERGE, FX3 commands, and the FX3 ALT1 legacy-MERGE form.
+    /// Implements FX3 MERGE commands and legacy ALT1+MERGE for GSU1/2 compatibility.
     void op_merge();
     /// Implements AND/BIC using a register or immediate nibble operand.
     void op_and_bic(uint8_t reg);
