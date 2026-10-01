@@ -23,6 +23,7 @@ struct FxBackend {
 
     void (*ram_write)(void* context, uint32_t address, uint8_t value); ///< Writes CPU-visible FX SRAM.
     void (*set_irq)(void* context, bool asserted);           ///< Callback used to assert or release the GSU IRQ line.
+    bool (*save)(void* context) = nullptr;                  ///< Synchronously persists SRAM; returns after XIP and core lockout are restored.
 };
 
 class SuperFx {
@@ -225,7 +226,7 @@ private:
     void op_add(uint8_t reg);
     /// Implements SUB/SBC/CMP and immediate subtraction forms.
     void op_sub_compare(uint8_t reg);
-    /// Implements normal MERGE or dispatches the FX3 command interface.
+    /// Implements normal MERGE, FX3 commands, and the FX3 ALT1 legacy-MERGE form.
     void op_merge();
     /// Implements AND/BIC using a register or immediate nibble operand.
     void op_and_bic(uint8_t reg);

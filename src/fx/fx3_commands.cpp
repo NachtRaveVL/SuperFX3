@@ -53,25 +53,37 @@ void SuperFx::process_fx3_command() {
 // MERGE
 // GSU1/2: Normal MERGE instruction.
 // FX3: MERGE is repurposed as the FX3 command interface.
-// MesenCE and Randy's feedback say to not change status flags,
-// but do reset prefix flags. Snes9x's implementation clears them.
+// Randy confirmed that FX3 commands preserve status flags and consume prefixes.
+// The common instruction dispatcher clears prefixes after the operation returns.
+// ALT2/ALT3 have no assigned MERGE behavior and perform no operation.
 void SuperFx::op_merge() {
     if (config_.chip == FxChip::FX3) {
-        process_fx3_command();
+        if (state_.flags.alt1 && !state_.flags.alt2) {
+            // FX3 keeps the original GSU MERGE operation behind ALT1 so an
+            // FX3-aware program can still use the legacy byte-combine primitive.
+            // Randy sends his regards: he wishes he would had kept MERGE original and used ALT1+MERGE for FX3 behavior.
+            const uint16_t value = (state_.r[7] & 0xFF00) | (state_.r[8] >> 8);
 
-        reset_prefix();
+            write_dst(value);
+
+            state_.flags.carry = (value & 0xE0E0) != 0;
+            state_.flags.overflow = (value & 0xC0C0) != 0;
+            state_.flags.sign = (value & 0x8080) != 0;
+            state_.flags.zero = (value & 0xF0F0) != 0;
+        } else if (!state_.flags.alt1 && !state_.flags.alt2) {
+            process_fx3_command();
+        }
+
         return;
-    } else {
-        // Normal GSU1 / GSU2 MERGE.
-        const uint16_t value = (state_.r[7] & 0xFF00) | (state_.r[8] >> 8);
-
-        write_dst(value);
-
-        state_.flags.carry = (value & 0xE0E0) != 0;
-        state_.flags.overflow = (value & 0xC0C0) != 0;
-        state_.flags.sign = (value & 0x8080) != 0;
-        state_.flags.zero = (value & 0xF0F0) != 0;
-
-        reset_prefix();
     }
+
+    // Normal GSU1 / GSU2 MERGE.
+    const uint16_t value = (state_.r[7] & 0xFF00) | (state_.r[8] >> 8);
+
+    write_dst(value);
+
+    state_.flags.carry = (value & 0xE0E0) != 0;
+    state_.flags.overflow = (value & 0xC0C0) != 0;
+    state_.flags.sign = (value & 0x8080) != 0;
+    state_.flags.zero = (value & 0xF0F0) != 0;
 }

@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import argparse
+import struct
 from enum import Enum
 from pathlib import Path
 
 MIB = 1024 * 1024
 KIB = 1024
 BUS_IMAGE_SIZE = 16 * MIB
-BUS_HALF_SIZE = 8 * MIB
 PAGE_SIZE = 0x1000
-CHIP_SIZE_MBIT_CHOICES = (1, 2, 4, 8, 16, 32, 64)
+CHIP_SIZE_MBIT_CHOICES = (1, 2, 4, 8, 16, 32, 64, 128)
+DESCRIPTOR_ADDRESS = 0x7E0000
 
 
 class RomMap(Enum):
@@ -144,7 +145,19 @@ def build_bus_image(rom: bytes, mapping: RomMap) -> bytearray:
         if page is not None:
             image[address:address + PAGE_SIZE] = page
 
+    add_descriptor(image, mapping, len(rom))
     return image
+
+
+def add_descriptor(image: bytearray, mapping: RomMap, source_size: int) -> None:
+    maps = (RomMap.LOROM, RomMap.HIROM, RomMap.EXLOROM, RomMap.EXHIROM)
+    if len(image) != BUS_IMAGE_SIZE or mapping not in maps:
+        return
+    mode = maps.index(mapping)
+    magic = 0x504D3353
+    image[DESCRIPTOR_ADDRESS:DESCRIPTOR_ADDRESS + 16] = struct.pack(
+        "<IIII", magic, mode, source_size, ~(magic ^ mode ^ source_size) & 0xFFFFFFFF
+    )
 
 
 def chip_size_bytes(size_mbit: int) -> int:
@@ -154,47 +167,40 @@ def chip_size_bytes(size_mbit: int) -> int:
     return size_mbit * MIB // 8
 
 
-def build_chip_images(
-    rom: bytes,
-    mapping: RomMap,
-    chip_size: int,
-    rom_count: int,
-) -> list[bytearray]:
+def build_chip_image(rom: bytes, mapping: RomMap, chip_size: int) -> bytearray:
     validate_source(rom, mapping)
 
-    if rom_count not in (1, 2):
-        raise ValueError("parallel ROM count must be 1 or 2")
-    if chip_size < 128 * KIB or chip_size > BUS_HALF_SIZE or chip_size & (chip_size - 1):
-        raise ValueError("parallel ROM size must be a power of two from 1 Mbit through 64 Mbit")
+    if chip_size < 128 * KIB or chip_size > BUS_IMAGE_SIZE or chip_size & (chip_size - 1):
+        raise ValueError("parallel ROM size must be a power of two from 1 Mbit through 128 Mbit")
 
-    images = [bytearray(b"\xFF") * chip_size for _ in range(rom_count)]
-    assigned: list[dict[int, bytes]] = [dict() for _ in range(rom_count)]
+    image = bytearray(b"\xFF") * chip_size
+    assigned: dict[int, bytes] = {}
 
     for address in range(0, BUS_IMAGE_SIZE, PAGE_SIZE):
         page = source_page(rom, mapping, address)
         if page is None:
             continue
 
-        chip = (address >> 23) & 1 if rom_count == 2 else 0
-        physical = (address & (BUS_HALF_SIZE - 1)) & (chip_size - 1)
+        physical = address & (chip_size - 1)
         page_index = physical // PAGE_SIZE
-        previous = assigned[chip].get(page_index)
+        previous = assigned.get(page_index)
 
         if previous is not None and previous != page:
             raise ImageCapacityError(
-                f"striped bus addresses alias conflicting data in ROM{chip} at 0x{physical:06X}"
+                f"bus addresses alias conflicting data in the ROM at 0x{physical:06X}"
             )
 
-        assigned[chip][page_index] = page
-        images[chip][physical:physical + PAGE_SIZE] = page
+        assigned[page_index] = page
+        image[physical:physical + PAGE_SIZE] = page
 
-    return images
+    add_descriptor(image, mapping, len(rom))
+    return image
 
 
-def minimum_chip_size_mbit(rom: bytes, mapping: RomMap, rom_count: int) -> int | None:
+def minimum_chip_size_mbit(rom: bytes, mapping: RomMap) -> int | None:
     for size_mbit in CHIP_SIZE_MBIT_CHOICES:
         try:
-            build_chip_images(rom, mapping, chip_size_bytes(size_mbit), rom_count)
+            build_chip_image(rom, mapping, chip_size_bytes(size_mbit))
             return size_mbit
         except ImageCapacityError:
             continue
@@ -208,18 +214,12 @@ def load_rom(path: Path) -> bytes:
     return rom
 
 
-def default_rom1_output(path: Path) -> Path:
-    suffix = path.suffix or ".bin"
-    stem = path.stem if path.suffix else path.name
-    return path.with_name(f"{stem}.rom1{suffix}")
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Stripe a SNES ROM for the direct A0-A23 parallel-flash cartridge bus."
     )
     parser.add_argument("rom", type=Path, help="input .sfc/.smc ROM or raw bus image")
-    parser.add_argument("output", type=Path, help="ROM0 programming image")
+    parser.add_argument("output", type=Path, help="single parallel-ROM programming image")
     parser.add_argument(
         "--map",
         dest="mapping",
@@ -231,20 +231,8 @@ def parse_args() -> argparse.Namespace:
         "--chip-size-mbit",
         type=int,
         choices=CHIP_SIZE_MBIT_CHOICES,
-        default=64,
-        help="capacity of each populated parallel ROM in Mbit (default: 64)",
-    )
-    parser.add_argument(
-        "--rom-count",
-        type=int,
-        choices=(1, 2),
-        default=1,
-        help="number of populated parallel ROMs (default: 1)",
-    )
-    parser.add_argument(
-        "--rom1-output",
-        type=Path,
-        help="ROM1 programming image when --rom-count=2",
+        default=128,
+        help="capacity of the single parallel ROM in Mbit (default: 128)",
     )
     return parser.parse_args()
 
@@ -256,31 +244,21 @@ def main() -> None:
     chip_size = chip_size_bytes(args.chip_size_mbit)
 
     try:
-        images = build_chip_images(rom, mapping, chip_size, args.rom_count)
+        image = build_chip_image(rom, mapping, chip_size)
     except ImageCapacityError as exc:
-        minimum = minimum_chip_size_mbit(rom, mapping, args.rom_count)
-        if minimum is None and args.rom_count == 1:
-            raise SystemExit(f"{exc}; this mapping requires the optional second ROM") from exc
+        minimum = minimum_chip_size_mbit(rom, mapping)
         if minimum is not None:
-            raise SystemExit(f"{exc}; use at least {minimum} Mbit per ROM") from exc
+            raise SystemExit(f"{exc}; use at least a {minimum} Mbit ROM") from exc
         raise SystemExit(str(exc)) from exc
 
-    args.output.write_bytes(images[0])
-    rom1_output = None
-    if args.rom_count == 2:
-        rom1_output = args.rom1_output or default_rom1_output(args.output)
-        rom1_output.write_bytes(images[1])
-    elif args.rom1_output is not None:
-        raise SystemExit("--rom1-output requires --rom-count=2")
+    args.output.write_bytes(image)
 
-    minimum = minimum_chip_size_mbit(rom, mapping, args.rom_count)
+    minimum = minimum_chip_size_mbit(rom, mapping)
     print(f"Map: {mapping.value}")
     print(f"Source ROM: {len(rom)} bytes")
-    print(f"ROM0: {args.output} ({len(images[0])} bytes)")
-    if rom1_output is not None:
-        print(f"ROM1: {rom1_output} ({len(images[1])} bytes)")
+    print(f"Parallel ROM: {args.output} ({len(image)} bytes)")
     if minimum is not None:
-        print(f"Minimum device size for this population: {minimum} Mbit")
+        print(f"Minimum device size: {minimum} Mbit")
 
 
 if __name__ == "__main__":

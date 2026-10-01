@@ -179,7 +179,13 @@ static bool test_fx3_merge_dispatch(TestSuperFx& fx, TestMemory& memory) {
         const std::vector<uint8_t> before = memory.ram;
 
         fx.state_.r[0] = command;
-        fx.op_merge();
+        fx.state_.src_reg = 4;
+        fx.state_.dst_reg = 6;
+        fx.state_.flags.prefix = true;
+        fx.state_.flags.carry = true;
+        fx.execute_opcode(0x70);
+        test_require(!fx.state_.flags.prefix && !fx.state_.src_reg && !fx.state_.dst_reg &&
+                         fx.state_.flags.carry, "FX3 MERGE cleanup or status preservation failed");
 
         if (command <= 2) {
             if (memory.ram != before) {
@@ -199,10 +205,42 @@ static bool test_fx3_merge_dispatch(TestSuperFx& fx, TestMemory& memory) {
 
     const uint8_t before = memory.ram[fx3_layout::PLANAR_BASE + 0x1234];
     fx.state_.r[0] = 0xFFFF;
-    fx.op_merge();
+    fx.execute_opcode(0x70);
     if (memory.ram[fx3_layout::PLANAR_BASE + 0x1234] != before) {
         std::puts("Unknown FX3 MERGE command modified framebuffer RAM");
         return false;
+    }
+
+    // ALT1 restores the original GSU MERGE operation in FX3 mode. The plain
+    // opcode remains the R0-selected command interface.
+    fx.reset();
+    fx.state_.r[0] = 3;
+    fx.state_.r[7] = 0x10AA;
+    fx.state_.r[8] = 0x01BB;
+    fx.state_.flags.alt1 = true;
+    fx.state_.flags.prefix = true;
+    fx.execute_opcode(0x70);
+    if (fx.state_.r[0] != 0x1001 || fx.state_.flags.carry || fx.state_.flags.overflow ||
+        fx.state_.flags.sign || !fx.state_.flags.zero || fx.state_.flags.alt1 ||
+        fx.state_.flags.alt2 || fx.state_.flags.prefix) {
+        std::puts("FX3 ALT1 MERGE did not preserve the original GSU operation");
+        return false;
+    }
+
+    // ALT2/ALT3 have no assigned MERGE behavior. Both are harmless and consume prefixes.
+    for (uint8_t prefix = 2; prefix <= 3; ++prefix) {
+        fx.reset();
+        std::fill(memory.ram.begin() + fx3_layout::PLANAR_BASE, memory.ram.end(), 0x5A);
+        const std::vector<uint8_t> prefixed_before = memory.ram;
+        fx.state_.r[0] = 3;
+        fx.state_.flags.alt1 = (prefix & 1u) != 0;
+        fx.state_.flags.alt2 = true;
+        fx.execute_opcode(0x70);
+        if (fx.state_.r[0] != 3 || memory.ram != prefixed_before ||
+            fx.state_.flags.alt1 || fx.state_.flags.alt2) {
+            std::puts("Unassigned FX3 MERGE prefix changed architectural state");
+            return false;
+        }
     }
 
     return true;
@@ -302,13 +340,46 @@ static bool test_fx3_register_basics(TestSuperFx& fx, TestMemory& memory) {
     }
 
     memory.irq = false;
-    fx.op_stop();
+    fx.execute_opcode(0x00);
     if (fx.running() || fx.cpu_read(0x701E) != 0 || fx.cpu_read(0x701F) != 0 || memory.irq) {
         std::puts("FX3 STOP completion behavior failed");
         return false;
     }
 
     return true;
+}
+
+static void test_fx3_4bpp_scbr(TestSuperFx& fx, TestMemory& memory) {
+    fx.reset();
+    std::fill(memory.ram.begin(), memory.ram.end(), 0);
+    fx.cpu_write(0x7038, 0x08); // SCBR=$08, framebuffer at $702000, not $710000.
+    fx.cpu_write(0x703A, 0x01); // SCMR MD=1: ordinary 4bpp, 128-line columns.
+    test_require(fx.state_.screen_base == 0x08 && fx.state_.plot_bpp == 4,
+                 "FX3 ignored software SCBR or 4bpp SCMR");
+    const uint8_t pixels[8] = {1, 2, 4, 8, 15, 3, 5, 10};
+    fx.state_.r[1] = 8;
+    fx.state_.r[2] = 9;
+    for (uint8_t pixel : pixels) {
+        fx.state_.color = pixel;
+        fx.execute_opcode(0x4C); // PLOT advances X.
+    }
+    test_require(fx.state_.r[1] == 16, "PLOT did not advance X");
+    for (uint16_t x = 0; x < 8; ++x) {
+        fx.state_.r[1] = static_cast<uint16_t>(8 + x);
+        fx.execute_opcode(0x3D); // ALT1 + RPIX flushes pending PLOT writes.
+        fx.execute_opcode(0x4C);
+        test_require(fx.state_.r[0] == pixels[x], "4bpp non-default-SCBR RPIX mismatch");
+    }
+    // Independent 128-line layout: tile column 1, row 1 => tile 17;
+    // 32-byte 4bpp tiles, scanline 1 => $2000 + 17*32 + 2 = $2222.
+    const uint32_t offsets[4] = {0x2222, 0x2223, 0x2232, 0x2233};
+    for (uint32_t addr = 0; addr < memory.ram.size(); ++addr) {
+        uint8_t expected = 0;
+        for (uint8_t plane = 0; plane < 4; ++plane) {
+            if (addr == offsets[plane]) expected = reference_plane(pixels, plane);
+        }
+        test_require(memory.ram[addr] == expected, "4bpp PLOT wrote outside selected bitplanes/SCBR");
+    }
 }
 
 int main() {
@@ -323,6 +394,7 @@ int main() {
     if (!test_fx3_merge_dispatch(fx, memory)) return 5;
     if (!test_fx3_primary_spec_rules(fx, memory)) return 6;
     if (!test_fx3_register_basics(fx, memory)) return 7;
+    test_fx3_4bpp_scbr(fx, memory);
 
     std::puts("fx_core_sanity: PASS");
     return 0;

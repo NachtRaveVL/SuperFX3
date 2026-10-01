@@ -62,7 +62,8 @@ def test_bus_image() -> None:
     require(image[0x008000:0x010000] == rom, "LoROM bank $00 upper half is wrong")
     require(image[0x808000:0x810000] == rom, "LoROM bank $80 mirror is wrong")
     require(image[0x400000:0x408000] == rom, "LoROM full-bank mirror is wrong")
-    require(image[0x7E0000:0x7E0100] == b"\xFF" * 0x100, "WRAM bank $7E was populated")
+    require(image[0x7E0000:0x7E0004] == b"S3MP", "installed map descriptor missing")
+    require(image[0x7E0010:0x7E0100] == b"\xFF" * 0xF0, "WRAM bank contains ROM payload")
 
 
 def test_header_strip() -> None:
@@ -85,11 +86,11 @@ def patterned_rom(size: int) -> bytes:
 def test_physical_capacity() -> None:
     rom = patterned_rom(4 * tool.MIB)
 
-    require(tool.minimum_chip_size_mbit(rom, tool.RomMap.LOROM, 1) == 64,
-            "4 MiB LoROM did not require the expected 8 MiB striped device")
+    require(tool.minimum_chip_size_mbit(rom, tool.RomMap.LOROM) == 64,
+            "4 MiB LoROM did not require the expected 8 MiB device")
 
-    image = tool.build_chip_images(rom, tool.RomMap.LOROM, 8 * tool.MIB, 1)[0]
-    require(len(image) == 8 * tool.MIB, "64-Mbit ROM0 image has the wrong size")
+    image = tool.build_chip_image(rom, tool.RomMap.LOROM, 8 * tool.MIB)
+    require(len(image) == 8 * tool.MIB, "64-Mbit ROM image has the wrong size")
     require(image[0x008000:0x009000] == rom[0x000000:0x001000],
             "striped LoROM bank $00 did not map to source offset 0")
     require(image[0x408000:0x409000] == rom[0x200000:0x201000],
@@ -102,11 +103,11 @@ def test_small_device_capacity() -> None:
     lorom_128k = patterned_rom(128 * tool.KIB)
     hirom_128k = patterned_rom(128 * tool.KIB)
 
-    require(tool.minimum_chip_size_mbit(lorom_64k, tool.RomMap.LOROM, 1) == 1,
+    require(tool.minimum_chip_size_mbit(lorom_64k, tool.RomMap.LOROM) == 1,
             "64 KiB LoROM did not fit the minimum 1-Mbit device")
-    require(tool.minimum_chip_size_mbit(lorom_128k, tool.RomMap.LOROM, 1) == 2,
+    require(tool.minimum_chip_size_mbit(lorom_128k, tool.RomMap.LOROM) == 2,
             "128 KiB LoROM did not account for the striped 2-Mbit physical image")
-    require(tool.minimum_chip_size_mbit(hirom_128k, tool.RomMap.HIROM, 1) == 1,
+    require(tool.minimum_chip_size_mbit(hirom_128k, tool.RomMap.HIROM) == 1,
             "128 KiB HiROM did not fit a 1-Mbit device")
 
 def test_superfx_extended() -> None:
@@ -129,28 +130,22 @@ def test_superfx_extended() -> None:
             "extended SuperFX map exposed the low SRAM/I/O window as ROM")
     require(tool.rom_offset(mapping, 0x700000, len(rom)) is None,
             "extended SuperFX map exposed bank $70 as ROM")
-    require(tool.minimum_chip_size_mbit(rom, mapping, 1) is None,
-            "11 MiB extended SuperFX image unexpectedly fit one 64-Mbit device")
-    require(tool.minimum_chip_size_mbit(rom, mapping, 2) == 64,
-            "11 MiB extended SuperFX image did not fit two 64-Mbit devices")
+    require(tool.minimum_chip_size_mbit(rom, mapping) == 128,
+            "11 MiB extended SuperFX image did not require one 128-Mbit device")
 
 
-def test_raw_dual_rom() -> None:
+def test_raw_128_mbit_rom() -> None:
     lower = b"\x35" * (8 * tool.MIB)
     upper = b"\xCA" * (8 * tool.MIB)
-    images = tool.build_chip_images(
-        lower + upper, tool.RomMap.RAW, 8 * tool.MIB, 2
-    )
-
-    require(images[0] == lower, "raw bus-image lower half did not become ROM0")
-    require(images[1] == upper, "raw bus-image upper half did not become ROM1")
+    image = tool.build_chip_image(lower + upper, tool.RomMap.RAW, 16 * tool.MIB)
+    require(image == lower + upper, "16 MiB raw bus image did not fit the single 128-Mbit ROM")
 
     try:
-        tool.build_chip_images(lower + upper, tool.RomMap.RAW, 8 * tool.MIB, 1)
+        tool.build_chip_image(lower + upper, tool.RomMap.RAW, 8 * tool.MIB)
     except tool.ImageCapacityError:
         pass
     else:
-        require(False, "conflicting 16 MiB raw bus image unexpectedly fit one ROM")
+        require(False, "conflicting 16 MiB raw bus image unexpectedly fit a 64-Mbit ROM")
 
 def main() -> None:
     test_offsets()
@@ -159,7 +154,7 @@ def main() -> None:
     test_physical_capacity()
     test_small_device_capacity()
     test_superfx_extended()
-    test_raw_dual_rom()
+    test_raw_128_mbit_rom()
     print("snes_rom_image_tests: PASS")
 
 

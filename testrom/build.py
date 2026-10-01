@@ -17,15 +17,25 @@ ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
 TOOLS = ROOT / "tools"
 _QSPI_PACKER = runpy.run_path(str(REPO / "src/tools/make_fx3_qspi_image.py"))
-FX3_ROM_PARTITION_SIZE = int(_QSPI_PACKER["FX3_ROM_SIZE"])
-DEFAULT_QSPI_FLASH_SIZE = int(_QSPI_PACKER["DEFAULT_FLASH_SIZE"])
-DEFAULT_FX3_ROM_OFFSET = DEFAULT_QSPI_FLASH_SIZE - FX3_ROM_PARTITION_SIZE
+FX3_ROM_PARTITION_SIZE = int(_QSPI_PACKER["FX3_CODE_SIZE"])
+DEFAULT_QSPI_FLASH_SIZE = int(_QSPI_PACKER["QSPI_FLASH_SIZE"])
+FX3_SAVE_OFFSET = int(_QSPI_PACKER["FX3_SAVE_OFFSET"])
+FX3_SAVE_SIZE = int(_QSPI_PACKER["FX3_SAVE_SIZE"])
+DEFAULT_FX3_ROM_OFFSET = int(_QSPI_PACKER["FX3_CODE_OFFSET"])
 SYMBOL_RE = re.compile(r"\b([0-9A-Fa-f]{6,8})\s+\.?([A-Za-z_][A-Za-z0-9_]*)\s*$")
 
 
 def run(command: list[str], cwd: Path = ROOT) -> None:
     print("+", " ".join(command))
     subprocess.run(command, cwd=cwd, check=True)
+
+
+def color_status(result: str, stream) -> str:
+    if stream.isatty() and not os.environ.get("NO_COLOR") and \
+            os.environ.get("TERM", "dumb") != "dumb":
+        color = "\033[32m" if result == "PASS" else "\033[31m"
+        return f"\033[1m{color}{result}\033[0m"
+    return result
 
 
 def find_cc65_tool(name: str) -> str:
@@ -137,18 +147,13 @@ def stage_fx_partition(fx_rom: Path, output: Path) -> Path:
     return output
 
 
-def pack_parallel(rom: Path, output: Path, chip_size_mbit: int, rom_count: int) -> list[Path]:
+def pack_parallel(rom: Path, output: Path, chip_size_mbit: int) -> Path:
     command = [
         sys.executable, str(REPO / "src/tools/make_snes_rom_image.py"), str(rom), str(output),
-        "--map", "lorom", "--chip-size-mbit", str(chip_size_mbit), "--rom-count", str(rom_count),
+        "--map", "lorom", "--chip-size-mbit", str(chip_size_mbit),
     ]
     run(command, cwd=REPO)
-    outputs = [output]
-    if rom_count == 2:
-        suffix = output.suffix or ".bin"
-        stem = output.stem if output.suffix else output.name
-        outputs.append(output.with_name(f"{stem}.rom1{suffix}"))
-    return outputs
+    return output
 
 
 def pack_qspi(firmware: Path, fx_rom: Path, output: Path) -> None:
@@ -230,7 +235,7 @@ def write_manifest(
         "fxrom_compact": artifact_record(fx_rom, "linked private GSU test payload"),
         "fxrom_partition": artifact_record(
             fx_partition,
-            "3 MiB programming-ready private FX3 QSPI ROM partition",
+            "3 MiB programming-ready private FX code partition in QSPI",
             flash_offset=DEFAULT_FX3_ROM_OFFSET,
         ),
     }
@@ -247,6 +252,9 @@ def write_manifest(
         "pair_id": pair_digest.hexdigest()[:16],
         "qspi_layout": {
             "default_flash_size": DEFAULT_QSPI_FLASH_SIZE,
+            "save_offset": FX3_SAVE_OFFSET,
+            "save_offset_hex": f"0x{FX3_SAVE_OFFSET:06X}",
+            "save_size": FX3_SAVE_SIZE,
             "fxrom_partition_size": FX3_ROM_PARTITION_SIZE,
             "fxrom_default_offset": DEFAULT_FX3_ROM_OFFSET,
             "fxrom_default_offset_hex": f"0x{DEFAULT_FX3_ROM_OFFSET:06X}",
@@ -294,6 +302,9 @@ def self_test_build_helpers() -> None:
         manifest = json.loads(manifest_path.read_text())
         if manifest["qspi_layout"]["fxrom_partition_size"] != FX3_ROM_PARTITION_SIZE:
             raise SystemExit("manifest QSPI partition size drifted from the firmware layout")
+        if manifest["qspi_layout"]["save_offset"] != FX3_SAVE_OFFSET or \
+                manifest["qspi_layout"]["save_size"] != FX3_SAVE_SIZE:
+            raise SystemExit("manifest save journal layout drifted from the firmware layout")
         if manifest["artifacts"]["fxrom_partition"]["flash_offset"] != DEFAULT_FX3_ROM_OFFSET:
             raise SystemExit("manifest QSPI offset drifted from the firmware layout")
         if len(manifest["tests"]) != len(tests):
@@ -304,9 +315,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the native SuperFX3 diagnostic ROM pair.")
     parser.add_argument("--build-dir", type=Path, default=REPO / "build/testrom")
     parser.add_argument("--check", action="store_true", help="validate sources and generate assets without requiring cc65")
-    parser.add_argument("--pack-parallel", action="store_true", help="also create physical parallel-ROM programming image(s)")
-    parser.add_argument("--chip-size-mbit", type=int, default=64)
-    parser.add_argument("--rom-count", type=int, choices=(1, 2), default=1)
+    parser.add_argument("--pack-parallel", action="store_true", help="also create the physical parallel-ROM programming image")
+    parser.add_argument("--chip-size-mbit", type=int, default=128)
     parser.add_argument("--firmware-bin", type=Path, help="also combine the FX test image with an RP2350 firmware .bin")
     return parser.parse_args()
 
@@ -314,10 +324,21 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     build_dir = args.build_dir.resolve()
-    generate_sources(build_dir)
+
+    try:
+        generate_sources(build_dir)
+        if args.check:
+            self_test_build_helpers()
+    except (subprocess.CalledProcessError, SystemExit):
+        if args.check:
+            print(
+                f"Diagnostic ROM source/build-helper checks: {color_status('FAIL', sys.stderr)}",
+                file=sys.stderr,
+            )
+        raise
+
     if args.check:
-        self_test_build_helpers()
-        print("Diagnostic ROM source/build-helper checks: PASS")
+        print(f"Diagnostic ROM source/build-helper checks: {color_status('PASS', sys.stdout)}")
         return 0
 
     ca65 = find_cc65_tool("ca65")
@@ -328,9 +349,8 @@ def main() -> int:
 
     extras: list[tuple[Path, str, int | None]] = []
     if args.pack_parallel:
-        parallel = pack_parallel(snes_rom, build_dir / "fx3_test_rom0.bin", args.chip_size_mbit, args.rom_count)
-        for index, path in enumerate(parallel):
-            extras.append((path, f"parallel ROM{index} programming image", None))
+        parallel = pack_parallel(snes_rom, build_dir / "fx3_test_parallel_rom.bin", args.chip_size_mbit)
+        extras.append((parallel, "single parallel-ROM programming image", None))
 
     if args.firmware_bin:
         firmware = args.firmware_bin.resolve()

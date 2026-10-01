@@ -19,12 +19,6 @@ endif()
 
 project(superfx3 C CXX ASM)
 
-set(SNES_PARALLEL_ROM_COUNT 1 CACHE STRING "Populated parallel ROM devices (1 or 2)")
-set_property(CACHE SNES_PARALLEL_ROM_COUNT PROPERTY STRINGS 1 2)
-if(NOT SNES_PARALLEL_ROM_COUNT STREQUAL "1" AND NOT SNES_PARALLEL_ROM_COUNT STREQUAL "2")
-    message(FATAL_ERROR "SNES_PARALLEL_ROM_COUNT must be 1 or 2.")
-endif()
-
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,10 +43,21 @@ add_executable(superfx3
     src/fx/fx3_graphics.cpp
     src/fx/fx3_commands.cpp
 
+    src/storage/fx3_save_journal.cpp
+    src/storage/parallel_rom_programmer.cpp
+    src/storage/snes_rom_layout.cpp
+    src/storage/snes_rom_installer.cpp
+    src/storage/usb_rom_volume.cpp
+
     src/platform/rp2350/fx_backend.cpp
     src/platform/rp2350/fx_sync.cpp
     src/platform/rp2350/snes_bus.cpp
     src/platform/rp2350/snes_pio.cpp
+    src/platform/rp2350/parallel_rom_gpio.cpp
+    src/platform/rp2350/qspi_save.cpp
+
+    src/usb/usb_descriptors.cpp
+    src/usb/usb_rom_loader.cpp
 )
 
 # Pioasm generates snes_bus.pio.h and adds its generated include directory to this target.
@@ -65,10 +70,10 @@ target_include_directories(superfx3 PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/src
     ${CMAKE_CURRENT_LIST_DIR}/src/fx
     ${CMAKE_CURRENT_LIST_DIR}/src/platform/rp2350
+    ${CMAKE_CURRENT_LIST_DIR}/src/usb
 )
 
 target_compile_definitions(superfx3 PRIVATE
-    SNES_PARALLEL_ROM_COUNT=${SNES_PARALLEL_ROM_COUNT}
     $<$<CONFIG:Debug>:PARAM_ASSERTIONS_ENABLED_HARDWARE_PIO=1>
 )
 
@@ -80,11 +85,15 @@ target_link_libraries(superfx3 PRIVATE
     hardware_clocks
     hardware_dma
     hardware_gpio
+    hardware_flash
     hardware_irq
     hardware_pio
     pico_multicore
+    pico_flash
     pico_sync
     pico_stdlib
+    tinyusb_device
+    tinyusb_board
 )
 
 pico_enable_stdio_uart(superfx3 0)
@@ -92,7 +101,18 @@ pico_enable_stdio_usb(superfx3 0)
 pico_add_extra_outputs(superfx3)
 # The diagnostic ROM is intentionally a separate target. Firmware-only builds do
 # not need cc65, while `fx3_testrom` gives us the 65816 supervisor and private GSU ROM.
-find_package(Python3 3 COMPONENTS Interpreter REQUIRED)
+find_package(Python3 3.10 COMPONENTS Interpreter REQUIRED)
+
+add_custom_command(
+    TARGET superfx3
+    POST_BUILD
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_LIST_DIR}/src/tools/check_firmware_size.py
+            ${CMAKE_CURRENT_BINARY_DIR}/superfx3.bin
+            $<TARGET_FILE:superfx3>
+    COMMENT "Checking SuperFX3 firmware size"
+    VERBATIM
+)
 add_custom_target(fx3_testrom
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/testrom/build.py
             --build-dir ${CMAKE_BINARY_DIR}/testrom
@@ -108,4 +128,3 @@ add_custom_target(fx3_testrom_check
     COMMENT "Checking FX3 diagnostic ROM sources"
     VERBATIM
 )
-

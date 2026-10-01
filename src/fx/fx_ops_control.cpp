@@ -9,29 +9,44 @@
 // $00: STOP
 // Mesen-derived: closely follows MesenCE Gsu::STOP().
 void SuperFx::op_stop() {
-    if (config_.chip == FxChip::FX3) {
-        // Unlimited FX3 execution has no later wall-clock step after STOP. Finish
-        // the last delayed store before publishing completion through R15.
+    const bool fx3 = config_.chip == FxChip::FX3;
+    const bool save = fx3 && state_.flags.alt1 && state_.flags.alt2;
+    state_.save_failed = false;
+    if (fx3) {
+        // Retire buffered stores before publishing completion. SAVE also drains
+        // both plot caches and pending ROM activity before entering flash safety.
         wait_ram_operation();
-        write_reg(15, 0);
+        if (save) {
+            write_pixel_cache(state_.secondary_cache);
+            write_pixel_cache(state_.primary_cache);
+            wait_ram_operation();
+            wait_rom_operation();
+        }
     }
 
-    // FX3 Technical Specifications v1.0 explicitly separates hardware from
-    // emulation here: hardware has no FX completion IRQ, STOP sets R15 to zero,
-    // and 65816 software polls R15. MesenCE intentionally keeps STOP IRQ support
-    // for emulation, so the hardware firmware must diverge from Mesen on this point.
-    if (!state_.irq_disabled && config_.chip != FxChip::FX3) {
+    // No guest execution or QSPI-backed guest fetches may run during the save.
+    // Prefix cleanup belongs to the instruction dispatcher after this returns.
+    state_.program_read_buffer = 0x01;
+    state_.flags.running = false;
+    update_running_state();
+
+    if (save && (!backend_.save || !backend_.save(backend_.context))) {
+        // Do not advertise a durable save on failure. Keep a nonzero R15 even
+        // at PC wraparound, halt, and require software to explicitly restart.
+        state_.save_failed = true;
+        write_reg(15, state_.r[15] ? state_.r[15] : 0xFFFF);
+        return;
+    }
+
+    if (fx3)
+        write_reg(15, 0);
+
+    // Official FX3 polls R15. Compatibility profiles may use the same completion
+    // IRQ as legacy GSU STOP, but only after save verification and XIP restoration.
+    if (!state_.irq_disabled && (!fx3 || config_.fx3_completion_irq)) {
         state_.flags.irq = true;
         if (backend_.set_irq) backend_.set_irq(backend_.context, true);
     }
-
-    // Next start begins with synthetic NOP again.
-    state_.program_read_buffer = 0x01;
-    state_.flags.running = false;
-
-    reset_prefix();
-
-    update_running_state();
 }
 
 // $01: NOP

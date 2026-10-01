@@ -160,7 +160,7 @@ def main() -> None:
     print()
     print("Not included in the coverage percentage: main.cpp, snes_bus.cpp, and snes_pio.cpp.")
     print("snes_bus.cpp/snes_pio.cpp are dynamically exercised by the stateful integration harness;")
-    print("PIO routing is also interpreted exhaustively. Real GPIO/PIO/DMA timing still requires hardware tests.")
+    print("PIO routing also has independent pin-map, instruction, and DMA contract checks. Real timing still requires hardware tests.")
 
     failures: list[str] = []
     if core_lines < CORE_LINE_MIN:
