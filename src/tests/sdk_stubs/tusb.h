@@ -15,7 +15,6 @@
 #define SCSI_SENSE_NOT_READY 2
 #define SCSI_SENSE_ILLEGAL_REQUEST 5
 #define SCSI_CMD_PREVENT_ALLOW_MEDIUM_REMOVAL 0x1E
-#define SCSI_CMD_SYNCHRONIZE_CACHE_10 0x35
 
 struct tusb_desc_device_t {
     uint8_t bLength, bDescriptorType;

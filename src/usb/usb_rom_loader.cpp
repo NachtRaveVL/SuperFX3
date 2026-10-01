@@ -17,6 +17,8 @@
 #include <string.h>
 
 namespace {
+// SYNCHRONIZE CACHE (10) is not named in the bundled TinyUSB SCSI enum.
+constexpr uint8_t SCSI_SYNCHRONIZE_CACHE_10 = 0x35;
 bool g_initialized = false;
 bool g_enabled = false;
 bool g_in_msc_callback = false;
@@ -156,7 +158,7 @@ extern "C" int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const scsi_cmd[16],
     switch (scsi_cmd[0]) {
     case SCSI_CMD_PREVENT_ALLOW_MEDIUM_REMOVAL:
         return 0;
-    case SCSI_CMD_SYNCHRONIZE_CACHE_10:
+    case SCSI_SYNCHRONIZE_CACHE_10:
         // A cache flush is not a file close. Hosts also flush growing files.
         g_in_msc_callback = true;
         {
