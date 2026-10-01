@@ -167,8 +167,9 @@ void SuperFx::op_getb() {
         // GETBH: Replace HIGH byte of source.
         value = static_cast<uint16_t>(
             (read_src() & 0x00FFu) | (static_cast<uint32_t>(rom_data) << 8));
-    } else // GETB
+    } else { // GETB
         value = rom_data;
+    }
 
     write_dst(value);
     reset_prefix();

@@ -6,7 +6,7 @@
  *
  * Portions of this software are based on MesenCE's GSU implementation (GPLv3).
  *
- * Special thanks to Randy Linden and kandowantu.
+ * Special thanks to Randy Linden, Sunlit, and kandowantu.
  * Dedicated to Rebecca Heineman and Jennell Jaquays.
  */
 
