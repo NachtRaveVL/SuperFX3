@@ -19,11 +19,14 @@ Reset:
     stz joy_previous
     stz joy_pressed
     stz menu_index
+    stz menu_top
     stz current_test
+    stz irq_seen
 
     jsr PpuInit
     jsr InputInit
     jsr RenderMenu
+    cli
 
 MainLoop:
     jsr WaitFrame
@@ -83,4 +86,22 @@ NmiHandler:
     rti
 
 IrqHandler:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    sep #$20
+    .a8
+    lda #$01
+    sta irq_seen
+    lda FX_SFR+1            ; Reading SFR high acknowledges the GSU IRQ.
+    rep #$20
+    .a16
+    ply
+    plx
+    pla
+    plp
     rti

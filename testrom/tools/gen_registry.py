@@ -5,9 +5,13 @@ import argparse
 import json
 from pathlib import Path
 
-SETUPS = {"NONE", "CPU_REG", "RAM_MAGIC", "PLOT", "CLEAR", "C2P_NOOP"}
-VALIDATORS = {"VCR", "CPU_REG", "COMPLETE", "RAM_MAGIC", "ALU", "ROM", "PLOT", "RPIX", "CLEAR", "C2P_NOOP", "PIPELINE", "PLOT_PATTERN"}
-FLAGS = {"CPU_ONLY", "VISUAL", "REPEAT"}
+SETUPS = {"NONE", "CPU_REG", "RAM_MAGIC", "PLOT", "CLEAR", "C2P_NOOP", "REG_WINDOW", "PLOT4", "SAVE"}
+VALIDATORS = {
+    "VCR", "CPU_REG", "COMPLETE", "RAM_MAGIC", "ALU", "ROM", "PLOT", "RPIX",
+    "CLEAR", "C2P_NOOP", "PIPELINE", "PLOT_PATTERN", "REG_WINDOW", "MERGE_LEGACY",
+    "PLOT4", "ROM_FULL", "NO_IRQ", "SAVE_COMMIT", "SAVE_RESTORE",
+}
+FLAGS = {"CPU_ONLY", "VISUAL", "REPEAT", "MANUAL"}
 
 
 def load_tests(path: Path) -> list[dict]:

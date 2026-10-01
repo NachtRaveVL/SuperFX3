@@ -23,6 +23,11 @@ FX3_SAVE_OFFSET = int(_QSPI_PACKER["FX3_SAVE_OFFSET"])
 FX3_SAVE_SIZE = int(_QSPI_PACKER["FX3_SAVE_SIZE"])
 DEFAULT_FX3_ROM_OFFSET = int(_QSPI_PACKER["FX3_CODE_OFFSET"])
 SYMBOL_RE = re.compile(r"\b([0-9A-Fa-f]{6,8})\s+\.?([A-Za-z_][A-Za-z0-9_]*)\s*$")
+FX3_PARTITION_PROBES = {
+    0x1FFFFF: 0x5F,
+    0x200000: 0x60,
+    0x2FFFFF: 0x6F,
+}
 
 
 def run(command: list[str], cwd: Path = ROOT) -> None:
@@ -143,6 +148,12 @@ def stage_fx_partition(fx_rom: Path, output: Path) -> Path:
         )
     image = bytearray(b"\xFF" * FX3_ROM_PARTITION_SIZE)
     image[:len(payload)] = payload
+    for offset, value in FX3_PARTITION_PROBES.items():
+        if not 0 <= offset < len(image):
+            raise SystemExit(f"FX3 diagnostic probe 0x{offset:X} is outside the private partition")
+        if offset < len(payload):
+            raise SystemExit(f"FX3 diagnostic probe 0x{offset:X} overlaps the linked payload")
+        image[offset] = value
     output.write_bytes(image)
     return output
 
@@ -259,6 +270,10 @@ def write_manifest(
             "fxrom_default_offset": DEFAULT_FX3_ROM_OFFSET,
             "fxrom_default_offset_hex": f"0x{DEFAULT_FX3_ROM_OFFSET:06X}",
             "erased_fill": "0xFF",
+            "diagnostic_probes": {
+                f"0x{offset:06X}": f"0x{value:02X}"
+                for offset, value in FX3_PARTITION_PROBES.items()
+            },
         },
         "artifacts": artifacts,
         "tests": manifest_tests,
@@ -287,8 +302,12 @@ def self_test_build_helpers() -> None:
             raise SystemExit("FX3 partition staging did not produce exactly 3 MiB")
         if partition_data[:0x8000] != fx_rom.read_bytes():
             raise SystemExit("FX3 partition staging changed the linked payload")
-        if partition_data[0x8000:] != b"\xFF" * (FX3_ROM_PARTITION_SIZE - 0x8000):
-            raise SystemExit("FX3 partition staging did not erase-fill unused space")
+        expected_partition = bytearray(b"\xFF" * FX3_ROM_PARTITION_SIZE)
+        expected_partition[:0x8000] = fx_rom.read_bytes()
+        for offset, value in FX3_PARTITION_PROBES.items():
+            expected_partition[offset] = value
+        if partition_data != expected_partition:
+            raise SystemExit("FX3 partition staging changed bytes outside the payload/probes")
 
         labels = temp / "fx3_test_fxrom.sym"
         kernels = [test["kernel"] for test in tests if test["kernel"]]
@@ -309,6 +328,15 @@ def self_test_build_helpers() -> None:
             raise SystemExit("manifest QSPI offset drifted from the firmware layout")
         if len(manifest["tests"]) != len(tests):
             raise SystemExit("manifest lost diagnostic tests")
+
+        firmware = temp / "superfx3.bin"
+        firmware.write_bytes(b"FX3")
+        combined = temp / "superfx3_test_qspi.bin"
+        pack_qspi(firmware, partition, combined)
+        combined_data = combined.read_bytes()
+        if len(combined_data) != DEFAULT_QSPI_FLASH_SIZE or \
+                combined_data[DEFAULT_FX3_ROM_OFFSET:] != partition_data:
+            raise SystemExit("combined QSPI image did not preserve the full staged FX partition")
 
 
 def parse_args() -> argparse.Namespace:
@@ -357,7 +385,7 @@ def main() -> int:
         if not firmware.is_file():
             raise SystemExit(f"firmware binary does not exist: {firmware}")
         combined = build_dir / "superfx3_test_qspi.bin"
-        pack_qspi(firmware, fx_rom, combined)
+        pack_qspi(firmware, fx_partition, combined)
         extras.append((combined, "complete RP2350 QSPI image with firmware and FX3 test ROM", 0))
 
     manifest = build_dir / "fx3_test_manifest.json"

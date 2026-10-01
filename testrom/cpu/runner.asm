@@ -13,6 +13,7 @@ RunCurrentTest:
     stz last_expected
     stz last_actual
     stz last_address
+    stz irq_seen
 
     jsr ResetGsuForTest
     jsr SetupCurrentTest
@@ -63,6 +64,7 @@ RunCurrentTest:
 ResetGsuForTest:
     sep #$20
     .a8
+    lda FX_SFR+1
     stz FX_SFR
     rep #$20
     .a16
@@ -143,7 +145,20 @@ SetupCurrentTest:
     cmp #SETUP_CLEAR
     beq @clear
     cmp #SETUP_C2P_NOOP
-    beq @c2p
+    bne :+
+    jmp @c2p
+:
+    cmp #SETUP_REG_WINDOW
+    bne :+
+    jmp @reg_window
+:
+    cmp #SETUP_PLOT4
+    bne :+
+    jmp @plot4
+:
+    cmp #SETUP_SAVE
+    bne @none
+    jmp @save
 @none:
     rep #$20
     .a16
@@ -213,6 +228,48 @@ SetupCurrentTest:
     cpx #$0100
     bne @c2p_fill
     rts
+@reg_window:
+    rep #$20
+    .a16
+    lda #$BEEF
+    sta FX_R5
+    rts
+@plot4:
+    rep #$20
+    .a16
+    lda #$0000
+    ldx #$0000
+@plot4_clear:
+    sta $702000,x
+    inx
+    inx
+    cpx #$0020
+    bne @plot4_clear
+    lda #$A5A5
+    ldx #$0000
+@plot4_guard:
+    sta $710000,x
+    inx
+    inx
+    cpx #$0020
+    bne @plot4_guard
+    sta $700218
+    sep #$20
+    .a8
+    lda #FX3_4BPP_SCBR
+    sta FX_SCBR
+    lda #FX3_SCMR_4BPP
+    sta FX_SCMR
+    rep #$20
+    .a16
+    rts
+@save:
+    rep #$20
+    .a16
+    lda $700302
+    inc
+    sta $700302
+    rts
 
 ValidateCurrentTest:
     ldy current_desc
@@ -243,6 +300,20 @@ ValidateCurrentTest:
     beq @pipeline
     cmp #VALIDATE_PLOT_PATTERN
     beq @plot_pattern
+    cmp #VALIDATE_REG_WINDOW
+    beq @reg_window
+    cmp #VALIDATE_MERGE_LEGACY
+    beq @merge_legacy
+    cmp #VALIDATE_PLOT4
+    beq @plot4
+    cmp #VALIDATE_ROM_FULL
+    beq @rom_full
+    cmp #VALIDATE_NO_IRQ
+    beq @no_irq
+    cmp #VALIDATE_SAVE_COMMIT
+    beq @save_commit
+    cmp #VALIDATE_SAVE_RESTORE
+    beq @save_restore
 @complete:
     rep #$20
     .a16
@@ -299,6 +370,41 @@ ValidateCurrentTest:
     rep #$20
     .a16
     jsr ValidatePlotPattern
+    rts
+@reg_window:
+    rep #$20
+    .a16
+    jsr ValidateRegisterWindow
+    rts
+@merge_legacy:
+    rep #$20
+    .a16
+    jsr ValidateMergeLegacy
+    rts
+@plot4:
+    rep #$20
+    .a16
+    jsr ValidatePlot4
+    rts
+@rom_full:
+    rep #$20
+    .a16
+    jsr ValidateRomFull
+    rts
+@no_irq:
+    rep #$20
+    .a16
+    jsr ValidateNoIrq
+    rts
+@save_commit:
+    rep #$20
+    .a16
+    jsr ValidateSaveCommit
+    rts
+@save_restore:
+    rep #$20
+    .a16
+    jsr ValidateSaveRestore
     rts
 
 ValidateVcr:
@@ -482,6 +588,215 @@ ValidatePlotPattern:
     sta last_address
     lda #TEST_RESULT_FAIL
     sta test_result
+    rts
+
+ValidateRegisterWindow:
+    lda #FX_R5
+    sta temp_word
+    lda FX_R5
+    cmp #$BEEF
+    bne @mirror_fail
+    lda #$740A
+    sta temp_word
+    lda $740A
+    cmp #$BEEF
+    bne @mirror_fail
+    lda #$780A
+    sta temp_word
+    lda $780A
+    cmp #$BEEF
+    bne @mirror_fail
+    lda #$7C0A
+    sta temp_word
+    lda $7C0A
+    cmp #$BEEF
+    bne @mirror_fail
+
+    lda #$730A
+    sta temp_word
+    lda $730A
+    cmp #$FFFF
+    bne @open_fail
+    lda #$770A
+    sta temp_word
+    lda $770A
+    cmp #$FFFF
+    bne @open_fail
+    lda #$7B0A
+    sta temp_word
+    lda $7B0A
+    cmp #$FFFF
+    bne @open_fail
+    lda #$7F0A
+    sta temp_word
+    lda $7F0A
+    cmp #$FFFF
+    bne @open_fail
+
+    lda #$1234
+    sta $730A
+    sta $770A
+    sta $7B0A
+    sta $7F0A
+    lda FX_R5
+    cmp #$BEEF
+    beq @pass
+    lda #FX_R5
+    sta temp_word
+@mirror_fail:
+    sta last_actual
+    lda #$BEEF
+    bra @record
+@open_fail:
+    sta last_actual
+    lda #$FFFF
+@record:
+    sta last_expected
+    lda temp_word
+    jmp RecordFailure
+@pass:
+    rts
+
+ValidateMergeLegacy:
+    lda $70020E
+    cmp #$12CD
+    bne @merge_fail
+    lda $700210
+    cmp #$BEEF
+    beq @pass
+    sta last_actual
+    lda #$BEEF
+    sta last_expected
+    lda #TEST_RAM_PREFIX
+    jmp RecordFailure
+@merge_fail:
+    sta last_actual
+    lda #$12CD
+    sta last_expected
+    lda #TEST_RAM_MERGE
+    jmp RecordFailure
+@pass:
+    rts
+
+ValidatePlot4:
+    lda $702000
+    cmp #$4D8E
+    bne @planes01_fail
+    lda $702010
+    cmp #$192A
+    bne @planes23_fail
+    lda $700218
+    cmp #$0001
+    bne @rpix_fail
+
+    ldx #$0000
+@guard_loop:
+    sep #$20
+    .a8
+    lda $710000,x
+    cmp #$A5
+    bne @guard_fail
+    rep #$20
+    .a16
+    inx
+    cpx #$0020
+    bne @guard_loop
+    rts
+@guard_fail:
+    sta last_actual
+    lda #$A5
+    sta last_expected
+    rep #$20
+    .a16
+    txa
+    jmp RecordFailure
+@planes01_fail:
+    sta last_actual
+    lda #$4D8E
+    sta last_expected
+    lda #FX3_4BPP_OFFSET
+    jmp RecordFailure
+@planes23_fail:
+    sta last_actual
+    lda #$192A
+    sta last_expected
+    lda #FX3_4BPP_OFFSET+$10
+    jmp RecordFailure
+@rpix_fail:
+    sta last_actual
+    lda #$0001
+    sta last_expected
+    lda #TEST_RAM_RPIX4
+    jmp RecordFailure
+
+ValidateRomFull:
+    lda $700212
+    cmp #$005F
+    bne @bank5f_fail
+    lda $700214
+    cmp #$0060
+    bne @bank60_fail
+    lda $700216
+    cmp #$006F
+    beq @pass
+    sta last_actual
+    lda #$006F
+    sta last_expected
+    lda #TEST_RAM_ROM_6F
+    jmp RecordFailure
+@bank5f_fail:
+    sta last_actual
+    lda #$005F
+    sta last_expected
+    lda #TEST_RAM_ROM_5F
+    jmp RecordFailure
+@bank60_fail:
+    sta last_actual
+    lda #$0060
+    sta last_expected
+    lda #TEST_RAM_ROM_60
+    jmp RecordFailure
+@pass:
+    rts
+
+ValidateNoIrq:
+    lda irq_seen
+    beq @pass
+    sta last_actual
+    stz last_expected
+    lda #FX_SFR
+    jmp RecordFailure
+@pass:
+    rts
+
+ValidateSaveCommit:
+    jsr ValidateSaveRestore
+    lda test_result
+    cmp #TEST_RESULT_PASS
+    bne @done
+    jsr ValidateNoIrq
+@done:
+    rts
+
+ValidateSaveRestore:
+    lda $700300
+    cmp #TEST_SAVE_COOKIE_VALUE
+    bne @cookie_fail
+    lda $700304
+    cmp #TEST_SAVE_GUARD_VALUE
+    beq @pass
+    sta last_actual
+    lda #TEST_SAVE_GUARD_VALUE
+    sta last_expected
+    lda #TEST_RAM_SAVE_GUARD
+    jmp RecordFailure
+@cookie_fail:
+    sta last_actual
+    lda #TEST_SAVE_COOKIE_VALUE
+    sta last_expected
+    lda #TEST_RAM_SAVE_COOKIE
+    jmp RecordFailure
+@pass:
     rts
 
 ValidateC2pNoop:

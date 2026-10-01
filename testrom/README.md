@@ -21,7 +21,7 @@ fx3_test_manifest.json
 
 `fx3_test_fxrom.bin` is the compact 32 KiB linked GSU payload. It is useful when a programmer or packing tool wants only the bytes that contain test code.
 
-`fx3_test_fxrom_partition.bin` is the programming-ready private FX code partition. It is exactly 3 MiB, starts with the linked GSU payload, and fills the unused space with `0xFF`. In the fixed 4 MiB QSPI layout this partition belongs at flash offset `0x100000`. The build imports those layout values from `make_fx3_qspi_image.py` so the diagnostic tooling does not maintain a second copy of them. It is not the SNES game/program ROM, which belongs in the external parallel NOR.
+`fx3_test_fxrom_partition.bin` is the programming-ready private FX code partition. It is exactly 3 MiB, starts with the linked GSU payload, and contains diagnostic bytes at offsets `0x1FFFFF`, `0x200000`, and `0x2FFFFF`; all other unused bytes are `0xFF`. In the fixed 4 MiB QSPI layout this partition belongs at flash offset `0x100000`. It is not the SNES game/program ROM, which belongs in the external parallel NOR.
 
 `fx3_test_manifest.json` records the SHA-256 and size of every artifact, the QSPI save/ROM partition layout, each linked GSU entry point, and a pair ID calculated from the SNES supervisor plus the programming-ready FX partition. This provides a simple way to catch a mismatched `.sfc` and GSU image at the bench.
 
@@ -55,7 +55,7 @@ No DOS environment is required.
 
 The source generators, registry checks, firmware ABI drift checks, QSPI staging helpers, and manifest helpers are exercised by `python3 testrom/build.py --check`. That check is also part of the main host test suite.
 
-The complete host/static firmware suite passes with this first-pass diagnostic framework in the tree, including the architectural core tests, stateful routed-bus simulation, the single-ROM configuration, synchronization tests, and the strict production stub link.
+The complete host/static firmware suite covers the architectural core, stateful routed-bus simulation, single-ROM configuration, synchronization, save journal, and strict production stub link.
 
 ## Programming Images
 
@@ -71,25 +71,29 @@ To build a complete QSPI image when `superfx3.bin` already exists:
 python3 testrom/build.py --firmware-bin build/superfx3.bin
 ```
 
-That uses the same QSPI image packer as the rest of the project.
+That packs the complete staged 3 MiB diagnostic partition, including its far-ROM probes, with the same QSPI image packer as the rest of the project.
 
 ## Test Architecture
 
 `tests.json` is the test registry. Each entry names a GSU kernel, setup operation, validator, timeout, and optional parameters. The menu and `RUN ALL` path use the same registry.
 
-The first pass contains these test families:
+The suite contains these test families:
 
-* FX3 presence and CPU-visible register access
-* GSU STOP and repeated START/STOP
+* FX3 presence, register mirrors, and open-bus quarters
+* GSU STOP and repeated START/STOP, with CFGR IRQs enabled and no completion IRQ observed
 * Shared RAM writes
 * A basic ALU result written back through shared RAM
-* Private FX ROM buffering through R14 and GETB
+* Private FX ROM buffering through R14/ROMBR/GETB, including the full 3 MiB range through bank `$6F`
 * An architectural private-ROM to ALU to delayed-RAM-store to STOP chain
-* 8bpp PLOT with byte-for-byte planar validation
+* 8bpp PLOT with byte-for-byte planar validation and legacy 4bpp PLOT/RPIX at non-default `SCBR=$08`
 * A complete 8x8 PLOT tile that exercises repeated pixel-cache handoffs
 * RPIX round trip
+* Exact `ALT1+MERGE` legacy behavior and common prefix cleanup
 * FX3 CLEAR A, B, and C with full tile-pattern checks and neighbor guards
 * FX3 C2P A, B, and C no-op checks for the current direct-to-planar firmware architecture
+* Manual `ALT3+STOP` durable-save commit and cold-boot restore checks
+
+The menu scrolls over the full registry while showing 17 test rows. `RUN ALL` skips the two manual save tests; select them individually. Run the save commit test, remove power only after it passes, cold boot, then run the restore test. Neither test expects a save-busy or completion IRQ.
 
 Visual tests also copy an actual 8bpp tile from bank `$71` into SNES VRAM. The BG1 map is blank everywhere except for one visual-result tile, so test data cannot repeat across the whole screen. TIMEOUT results keep BG1 hidden because the output buffer may still contain setup sentinels rather than a meaningful result. The screen is therefore useful to a human, but the screen is not the oracle. The 65816 checks the shared RAM bytes first.
 
@@ -100,6 +104,9 @@ The normal menu and running screens use a dark blue vertical gradient. Individua
 HDMA channels 5, 6, and 7 update the red, green, and blue components of `$2132` independently across the 224 visible scanlines. Channel 0 remains available for the existing VRAM DMA routines. `tools/gen_background.py` generates all four gradient themes. The background does not animate over time. Theme changes happen only when the UI state changes.
 
 ## Shared Test ABI
+
+The descriptor remains 16 bytes: name and kernel pointers, timeout, two parameters, expected value, kernel bank, setup, validator, and flags. The generated registry is the single source for the menu, selected-test runner, `RUN ALL`, and manifest. GSU kernels report through reserved words in shared SRAM; CPU-only validators exercise MMIO directly.
+
 ## Source Tree
 
 ```text

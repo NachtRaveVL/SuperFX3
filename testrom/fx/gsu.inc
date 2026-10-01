@@ -28,6 +28,18 @@
     .byte $01
 .endmacro
 
+.macro gsu_alt1
+    .byte $3D
+.endmacro
+
+.macro gsu_alt2
+    .byte $3E
+.endmacro
+
+.macro gsu_alt3
+    .byte $3F
+.endmacro
+
 .macro gsu_to reg
     .assert reg >= r0 && reg <= r15, error, "GSU TO register out of range"
     .byte $10 + reg
@@ -51,7 +63,7 @@
 
 .macro gsu_sm address, reg
     .assert reg >= r0 && reg <= r15, error, "GSU SM register out of range"
-    .byte $3E
+    gsu_alt2
     .byte $F0 + reg
     .word .loword(address)
 .endmacro
@@ -96,6 +108,14 @@
         gsu_with dreg
     .endif
     .byte $EF
+.endmacro
+
+.macro gsu_romb reg
+    .if reg <> r0
+        gsu_with reg
+    .endif
+    gsu_alt3
+    .byte $DF
 .endmacro
 
 .macro gsu_merge

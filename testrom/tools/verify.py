@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import runpy
 from pathlib import Path
 
 from gen_background import VISIBLE_SCANLINES, build_all_tables
@@ -101,6 +102,8 @@ def main() -> int:
     require_source(r"sta\s+current_test.*?jsr\s+RenderRunning.*?jsr\s+WaitFrame.*?jsr\s+PpuUploadTextMap.*?jsr\s+RunCurrentTest",
                    startup_source,
                    "selected tests must draw the RUNNING screen before executing/waiting")
+    require_source(r"IrqHandler:.*?sta\s+irq_seen.*?lda\s+FX_SFR\+1", startup_source,
+                   "GSU IRQ handler must record and acknowledge unexpected completion IRQs")
 
     ppu_source = (testrom / "cpu/ppu.asm").read_text()
     require_source(r"PpuClearBg1Map:.*?lda\s+#BG1_BLANK_TILE.*?BG1_VISUAL_MAP_OFFSET", ppu_source,
@@ -138,12 +141,16 @@ def main() -> int:
     register_source = (root / "src/fx/fx_registers.cpp").read_text()
     command_source = (root / "src/fx/fx3_commands.cpp").read_text()
     memory_source = (root / "src/fx/fx_memory.cpp").read_text()
+    control_source = (root / "src/fx/fx_ops_control.cpp").read_text()
+    core_source = (root / "src/fx/fx_core.cpp").read_text()
+    graphics_source = (root / "src/fx/fx_graphics.cpp").read_text()
 
     asm_contract = {
         "FX_R0": 0x7000,
         "FX_R15": 0x701E,
         "FX_SFR": 0x7030,
         "FX_PBR": 0x7034,
+        "FX_ROMBR": 0x7036,
         "FX_CFGR": 0x7037,
         "FX_SCBR": 0x7038,
         "FX_CLSR": 0x7039,
@@ -152,8 +159,9 @@ def main() -> int:
         "FX_RAMBR": 0x703C,
         "FX3_VCR_VALUE": 0x52,
         "FX3_DEFAULT_SCBR": 0x40,
+        "FX3_SCMR_4BPP": 0x01,
         "FX3_SCMR_8BPP": 0x03,
-        "FX3_CFGR_TEST": 0xA0,
+        "FX3_CFGR_TEST": 0x20,
         "FX3_CLSR_FAST": 0x01,
     }
     for name, value in asm_contract.items():
@@ -172,6 +180,11 @@ def main() -> int:
         "test ROM ABI drift: firmware FX3 VCR no longer reports $52",
     )
     require_source(
+        r"case\s+1\s*:.*?case\s+2\s*:.*?state_\.plot_bpp\s*=\s*4",
+        register_source,
+        "test ROM ABI drift: SCMR modes 1/2 no longer select 4bpp PLOT",
+    )
+    require_source(
         r"case\s+3\s*:\s*state_\.plot_bpp\s*=\s*8",
         register_source,
         "test ROM ABI drift: SCMR mode 3 no longer selects 8bpp PLOT",
@@ -181,6 +194,16 @@ def main() -> int:
         memory_source,
         "test ROM ABI drift: GSU shared RAM is no longer mapped through banks $70/$71",
     )
+    require_source(r"state_\.screen_base\s*=\s*value", register_source,
+                   "test ROM ABI drift: SCBR is no longer software-programmable")
+    require_source(r"state_\.screen_base\)\s*<<\s*10", graphics_source,
+                   "test ROM ABI drift: PLOT no longer uses the programmed SCBR")
+    require_source(r"state_\.flags\.alt1\s*&&\s*!state_\.flags\.alt2", command_source,
+                   "test ROM ABI drift: legacy MERGE must require exact ALT1")
+    require_source(r"const bool save\s*=.*?state_\.flags\.alt1\s*&&\s*state_\.flags\.alt2",
+                   control_source, "test ROM ABI drift: ALT3+STOP no longer selects SAVE_AND_STOP")
+    require_source(r"FxChip::FX3\s*,\s*FxTiming::Unlimited\s*,\s*0x6F", core_source,
+                   "test ROM ABI drift: FX3 private ROM maximum bank is no longer $6F")
 
     for command, value in (("ChunkyToPlanarA", 0), ("ChunkyToPlanarB", 1), ("ChunkyToPlanarC", 2),
                            ("ClearA", 3), ("ClearB", 4), ("ClearC", 5)):
@@ -201,8 +224,46 @@ def main() -> int:
         "test ROM ABI drift: C2P 0-2 are no longer the current no-op command policy",
     )
 
-    if len(tests) > 18:
-        raise SystemExit("first-pass menu supports at most 18 visible tests")
+    by_id = {test["id"]: test for test in tests}
+    required_tests = {
+        "cpu_register_window", "gsu_stop", "rom_full_range", "plot_4bpp_scbr",
+        "alt1_merge_legacy", "save_and_stop", "save_cold_restore",
+    }
+    missing_tests = sorted(required_tests - by_id.keys())
+    if missing_tests:
+        raise SystemExit(f"current FX3 diagnostic coverage is missing: {', '.join(missing_tests)}")
+    if by_id["gsu_stop"]["validator"] != "NO_IRQ":
+        raise SystemExit("ordinary STOP must verify R15 completion without an IRQ")
+    for test_id in ("save_and_stop", "save_cold_restore"):
+        if "MANUAL" not in by_id[test_id]["flags"]:
+            raise SystemExit(f"{test_id} must remain an individually selected manual test")
+
+    require_source(r"gsu_alt1\s+gsu_merge\s+gsu_iwt", fx_source,
+                   "ALT1+MERGE regression must check common prefix cleanup")
+    require_source(r"FxKernel_SaveAndStop:.*?gsu_alt3\s+gsu_stop", fx_source,
+                   "save regression must execute ALT3+STOP")
+    if re.search(r"gsu_alt[23]\s+gsu_merge", fx_source):
+        raise SystemExit("diagnostic ROM must not assign behavior to ALT2/ALT3+MERGE")
+
+    runner_source = (testrom / "cpu/runner.asm").read_text()
+    require_source(r"FX3_4BPP_SCBR.*?sta\s+FX_SCBR.*?FX3_SCMR_4BPP.*?sta\s+FX_SCMR",
+                   runner_source, "4bpp regression must program non-default SCBR=$08")
+    require_source(r"ValidatePlot4:.*?\$702000.*?\$702010.*?\$710000",
+                   runner_source, "4bpp regression must check four planes and guard bank $71")
+    require_source(r"RunAllTests:.*?TEST_FLAG_MANUAL.*?bne\s+@skip_manual", ui_source,
+                   "RUN ALL must skip manual save/restore tests")
+    require_source(r"EnsureMenuVisible:.*?cmp\s+#17", ui_source,
+                   "menu must maintain a 17-row scrolling window")
+
+    packer = runpy.run_path(str(root / "src/tools/make_fx3_qspi_image.py"))
+    if int(packer["FX3_CODE_OFFSET"]) != 0x100000 or int(packer["FX3_CODE_SIZE"]) != 3 * 1024 * 1024:
+        raise SystemExit("diagnostic build requires the 3 MiB FX partition at QSPI offset 0x100000")
+    build_source = (testrom / "build.py").read_text()
+    for offset in (0x1FFFFF, 0x200000, 0x2FFFFF):
+        require_source(rf"0x{offset:06X}\s*:", build_source,
+                       f"FX partition staging is missing probe 0x{offset:06X}")
+    require_source(r"pack_qspi\(firmware,\s*fx_partition,\s*combined\)", build_source,
+                   "combined QSPI image must pack the full staged FX partition")
 
     print(f"Test ROM static checks: PASS ({len(tests)} tests, {len(requested)} GSU kernels)")
     return 0

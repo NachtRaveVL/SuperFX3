@@ -28,11 +28,25 @@
     "expected": 48879
   },
   {
+    "id": "cpu_register_window",
+    "name": "CORE / REGISTER MIRRORS",
+    "kernel": null,
+    "setup": "REG_WINDOW",
+    "validator": "REG_WINDOW",
+    "flags": [
+      "CPU_ONLY"
+    ],
+    "timeout": 1,
+    "param0": 0,
+    "param1": 0,
+    "expected": 48879
+  },
+  {
     "id": "gsu_stop",
     "name": "CORE / GSU STOP",
     "kernel": "FxKernel_Stop",
     "setup": "NONE",
-    "validator": "COMPLETE",
+    "validator": "NO_IRQ",
     "flags": [],
     "timeout": 30,
     "param0": 0,
@@ -102,6 +116,18 @@
     "expected": 216
   },
   {
+    "id": "rom_full_range",
+    "name": "MEMORY / PRIVATE ROM 3M",
+    "kernel": "FxKernel_RomFullRange",
+    "setup": "RAM_MAGIC",
+    "validator": "ROM_FULL",
+    "flags": [],
+    "timeout": 30,
+    "param0": 0,
+    "param1": 0,
+    "expected": 111
+  },
+  {
     "id": "plot_pixel",
     "name": "GRAPHICS / PLOT PIXEL",
     "kernel": "FxKernel_PlotPixel",
@@ -142,6 +168,18 @@
     "param0": 0,
     "param1": 0,
     "expected": 90
+  },
+  {
+    "id": "plot_4bpp_scbr",
+    "name": "GRAPHICS / 4BPP SCBR 08",
+    "kernel": "FxKernel_Plot4bppScbr",
+    "setup": "PLOT4",
+    "validator": "PLOT4",
+    "flags": [],
+    "timeout": 30,
+    "param0": 8,
+    "param1": 1,
+    "expected": 1
   },
   {
     "id": "clear_a",
@@ -220,5 +258,46 @@
     "param0": 0,
     "param1": 0,
     "expected": 0
+  },
+  {
+    "id": "alt1_merge_legacy",
+    "name": "FX3 / ALT1 MERGE LEGACY",
+    "kernel": "FxKernel_MergeLegacy",
+    "setup": "RAM_MAGIC",
+    "validator": "MERGE_LEGACY",
+    "flags": [],
+    "timeout": 30,
+    "param0": 0,
+    "param1": 0,
+    "expected": 4813
+  },
+  {
+    "id": "save_and_stop",
+    "name": "SAVE / COMMIT ALT3 STOP",
+    "kernel": "FxKernel_SaveAndStop",
+    "setup": "SAVE",
+    "validator": "SAVE_COMMIT",
+    "flags": [
+      "MANUAL"
+    ],
+    "timeout": 600,
+    "param0": 0,
+    "param1": 0,
+    "expected": 0
+  },
+  {
+    "id": "save_cold_restore",
+    "name": "SAVE / COLD RESTORE",
+    "kernel": null,
+    "setup": "NONE",
+    "validator": "SAVE_RESTORE",
+    "flags": [
+      "CPU_ONLY",
+      "MANUAL"
+    ],
+    "timeout": 1,
+    "param0": 0,
+    "param1": 0,
+    "expected": 21414
   }
 ]
