@@ -34,7 +34,7 @@ def color_status(result: str, stream) -> str:
     if stream.isatty() and not os.environ.get("NO_COLOR") and \
             os.environ.get("TERM", "dumb") != "dumb":
         color = "\033[32m" if result == "PASS" else "\033[31m"
-        return f"{color}{result}\033[0m"
+        return f"\033[1m{color}{result}\033[0m"
     return result
 
 

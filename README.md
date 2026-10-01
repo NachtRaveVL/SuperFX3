@@ -100,6 +100,14 @@ Signal | RP2350B GPIO | Description
 
 # Building
 
+## External Libraries
+
+SuperFX3 uses the following controller-side libraries:
+
+* **TinyUSB** for USB device and mass-storage support.
+
+Pico SDK manages library checkout at build time, and does not require a separate installation.
+
 ## Requirements
 
 * Raspberry Pi Pico SDK 2.3.0 or newer
