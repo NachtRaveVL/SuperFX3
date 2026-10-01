@@ -102,6 +102,17 @@ pico_add_extra_outputs(superfx3)
 # The diagnostic ROM is intentionally a separate target. Firmware-only builds do
 # not need cc65, while `fx3_testrom` gives us the 65816 supervisor and private GSU ROM.
 find_package(Python3 3 COMPONENTS Interpreter REQUIRED)
+
+add_custom_command(
+    TARGET superfx3
+    POST_BUILD
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_LIST_DIR}/src/tools/check_firmware_size.py
+            ${CMAKE_CURRENT_BINARY_DIR}/superfx3.bin
+            $<TARGET_FILE:superfx3>
+    COMMENT "Checking SuperFX3 firmware size"
+    VERBATIM
+)
 add_custom_target(fx3_testrom
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/testrom/build.py
             --build-dir ${CMAKE_BINARY_DIR}/testrom
