@@ -28,8 +28,8 @@ Hardware is currently in prototype phase and work continues on hardware validati
   * Leaves 392 KiB of RP2350 SRAM for firmware and runtime use
   * 216x144 visible 8bpp planar framebuffer in bank `$71` (FX3 mode)
 * 4 MiB (32 Mbit) RP2350 QSPI flash
-  * Lower 512 KiB for firmware
-  * 512 KiB append-only SRAM save journal
+  * Lower 496 KiB for firmware
+  * 528 KiB append-only SRAM save journal
   * Upper 3 MiB for private FX code and data
 * Separate parallel flash ROM for the SNES CPU
   * One TSOP48/56 device on a single `/ROM_CE` output
@@ -210,8 +210,8 @@ Parallel-flash writes use the byte-mode AMD/JEDEC command protocol with `AAA/555
 The production W25Q32 QSPI device uses one fixed three-part layout:
 
 ```text
-0x000000-0x07FFFF  RP2350 firmware
-0x080000-0x0FFFFF  append-only SRAM save journal
+0x000000-0x07BFFF  RP2350 firmware
+0x07C000-0x0FFFFF  append-only SRAM save journal
 0x100000-0x3FFFFF  private FX code and data
 ```
 
@@ -224,9 +224,11 @@ python3 src/tools/make_fx3_qspi_image.py \
     build/superfx3_qspi.bin
 ```
 
-The tool enforces the fixed 4 MiB QSPI layout: 512 KiB firmware, 512 KiB saves, and 3 MiB FX code. Save and unused FX-code space are filled with `0xFF`.
+The tool enforces the fixed 4 MiB QSPI layout: 496 KiB firmware, 528 KiB saves, and 3 MiB FX code. Save and unused FX-code space are filled with `0xFF`.
 
-The save journal holds three 132 KiB slots, each containing a header and complete 128 KiB SRAM snapshot. Payload is written first, with the `SFX3`/`CMIT` header committed last. Boot restores the newest CRC-valid record. Reusing a slot preserves the latest valid save until its replacement succeeds.
+The new save partition starts at `0x07C000`; saves from the previous `0x080000` layout are not automatically migrated.
+
+The save journal holds four 132 KiB slots, each containing a header and complete 128 KiB SRAM snapshot. Payload is written first, with the `SFX3`/`CMIT` header committed last. Boot restores the newest CRC-valid record. Reusing a slot preserves the latest valid save until its replacement succeeds.
 
 `ALT3; STOP` drains pending memory activity, stops the GSU, and saves from Core 1 while Core 0 is parked. Only SRAM/ROM-safe code executes while XIP is unavailable. After verification, XIP and Core 0 resume, R15 becomes zero, and the GSU stays stopped. Official FX3 uses R15 polling; compatibility profiles may assert a completion IRQ. Saves require no busy IRQ, USB connection, or save-and-continue behavior.
 

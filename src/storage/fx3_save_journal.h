@@ -23,8 +23,8 @@ constexpr uint32_t SLOT_COUNT = fx3_qspi::SAVE_SIZE / SLOT_SIZE;
 
 static_assert((PAYLOAD_SIZE & (fx3_qspi::FLASH_PAGE_SIZE - 1u)) == 0,
               "The FX3 save snapshot must be flash-page aligned.");
-static_assert(SLOT_COUNT >= 2,
-              "The FX3 save journal must retain more than one committed snapshot.");
+static_assert(SLOT_COUNT == 4 && SLOT_COUNT * SLOT_SIZE == fx3_qspi::SAVE_SIZE,
+              "Exactly four complete save slots must fill the production save partition.");
 
 struct QspiFlash {
     void* context;                         ///< Opaque context supplied to the callbacks.

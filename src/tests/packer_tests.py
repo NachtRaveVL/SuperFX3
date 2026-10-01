@@ -35,9 +35,9 @@ def main() -> None:
     required_layout = [
         "constexpr uint32_t FLASH_SIZE = 4u * 1024u * 1024u;",
         "constexpr uint32_t FIRMWARE_OFFSET = 0u;",
-        "constexpr uint32_t FIRMWARE_SIZE = 512u * 1024u;",
+        "constexpr uint32_t FIRMWARE_SIZE = 496u * 1024u;",
         "constexpr uint32_t SAVE_OFFSET = FIRMWARE_OFFSET + FIRMWARE_SIZE;",
-        "constexpr uint32_t SAVE_SIZE = 512u * 1024u;",
+        "constexpr uint32_t SAVE_SIZE = 528u * 1024u;",
         "constexpr uint32_t FX_CODE_OFFSET = SAVE_OFFSET + SAVE_SIZE;",
         "constexpr uint32_t FX_CODE_SIZE = 3u * 1024u * 1024u;",
         "FX_CODE_OFFSET + FX_CODE_SIZE == FLASH_SIZE",
@@ -61,7 +61,7 @@ def main() -> None:
             fail("default packed image is not 4 MiB")
         if data[: firmware.stat().st_size] != firmware.read_bytes():
             fail("packer changed the firmware payload")
-        if data[0x80000:0x100000] != b"\xFF" * 0x80000:
+        if data[0x7C000:0x100000] != b"\xFF" * 0x84000:
             fail("default image did not leave the save journal erased")
         if data[0x100000:0x100004] != b"\x11\x22\x33\x44":
             fail("default layout did not place private FX code at 0x100000")
@@ -72,7 +72,15 @@ def main() -> None:
             "--flash-size", "8M", ok=False)
 
         overlap_fw = temp / "overlap.bin"
-        overlap_fw.write_bytes(b"\xAA" * (0x80000 + 1))
+        overlap_fw.write_bytes(b"\xAA" * 0x7C000)
+        run(str(overlap_fw), str(rom), str(image))
+        boundary = image.read_bytes()
+        if boundary[:0x7C000] != overlap_fw.read_bytes() or \
+                boundary[0x7C000:0x100000] != b"\xFF" * 0x84000:
+            fail("maximum firmware did not preserve the full 528 KiB save partition")
+        if boundary[0x100000:0x100004] != rom.read_bytes():
+            fail("maximum firmware moved the FX-code partition")
+        overlap_fw.write_bytes(b"\xAA" * (0x7C000 + 1))
         run(str(overlap_fw), str(rom), str(temp / "bad-overlap.bin"), ok=False)
 
         oversized_rom = temp / "oversized.bin"

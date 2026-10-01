@@ -6,9 +6,18 @@
 #include "../storage/fx3_save_journal.h"
 #include "test_support.h"
 
+static_assert(fx3_save::PAYLOAD_SIZE == 128u * 1024u && fx3_save::HEADER_SIZE == 256u &&
+              fx3_save::SLOT_SIZE == 132u * 1024u, "Save slot format must not change.");
+static_assert(fx3_save::SLOT_COUNT == 4 && 4u * fx3_save::SLOT_SIZE == 528u * 1024u &&
+              fx3_qspi::SAVE_OFFSET == 0x07C000u &&
+              fx3_qspi::SAVE_OFFSET + 4u * fx3_save::SLOT_SIZE == 0x100000u,
+              "Four snapshots must fit exactly before the unchanged FX-code partition.");
+
 struct TestFlash {
     std::vector<uint8_t> bytes = std::vector<uint8_t>(fx3_qspi::FLASH_SIZE, 0xFF);
     uint32_t erase_count = 0;
+    uint32_t erased_offset = 0;
+    uint32_t erased_size = 0;
     bool fail_program = false;
     bool fail_erase = false;
 };
@@ -24,6 +33,8 @@ static bool erase_flash(void* context, uint32_t offset, uint32_t size) {
 
     std::fill(flash.bytes.begin() + offset, flash.bytes.begin() + offset + size, 0xFF);
     flash.erase_count++;
+    flash.erased_offset = offset;
+    flash.erased_size = size;
     return true;
 }
 
@@ -110,6 +121,7 @@ static void test_interrupted_slot_and_wrap_erase() {
     const auto data1 = snapshot(0x40);
     const auto data2 = snapshot(0x60);
     const auto data3 = snapshot(0x80);
+    const auto data4 = snapshot(0xA0);
     fx3_save::Record record{};
 
     test_require(fx3_save::append(flash, data0.data(), data0.size(), &record),
@@ -129,12 +141,49 @@ static void test_interrupted_slot_and_wrap_erase() {
 
     test_require(fx3_save::append(flash, data3.data(), data3.size(), &record),
                  "journal wrap append failed");
-    test_require(storage.erase_count == 1 && record.slot == 0 && record.sequence == 2,
+    test_require(storage.erase_count == 0 && record.slot == 3 && record.sequence == 2,
+                 "journal erased before consuming the fourth slot");
+    test_require(fx3_save::append(flash, data4.data(), data4.size(), &record),
+                 "journal wrap append failed");
+    test_require(storage.erase_count == 1 && record.slot == 0 && record.sequence == 3,
                  "journal did not erase exactly once on wrap");
 
     std::vector<uint8_t> output(fx3_save::PAYLOAD_SIZE);
-    test_require(fx3_save::restore(flash, output.data(), output.size(), &record) && output == data3,
+    test_require(fx3_save::restore(flash, output.data(), output.size(), &record) && output == data4,
                  "journal did not restore the post-wrap record");
+}
+
+static void test_four_snapshots_and_destination_only_wrap() {
+    TestFlash storage;
+    auto flash = make_flash(storage);
+    fx3_save::Record record{};
+    std::vector<uint8_t> output(fx3_save::PAYLOAD_SIZE);
+    // Non-erased sentinels protect both adjacent partitions.
+    std::fill(storage.bytes.begin(), storage.bytes.begin() + fx3_qspi::SAVE_OFFSET, 0xA5);
+    std::fill(storage.bytes.begin() + fx3_qspi::FX_CODE_OFFSET, storage.bytes.end(), 0x5A);
+    for (uint32_t i = 0; i < 4; ++i) {
+        const auto data = snapshot(static_cast<uint8_t>(i));
+        test_require(fx3_save::append(flash, data.data(), data.size(), &record), "four-slot fill failed");
+        test_require(record.slot == i && record.sequence == i && storage.erase_count == 0,
+                     "four snapshots did not fit without erasing");
+        test_require(fx3_save::restore(flash, output.data(), output.size()) && output == data,
+                     "restore did not select the newest of four snapshots");
+    }
+    const auto before = storage.bytes;
+    const auto next = snapshot(4);
+    test_require(fx3_save::append(flash, next.data(), next.size(), &record), "fifth append failed");
+    test_require(record.slot == 0 && record.sequence == 4 && storage.erase_count == 1 &&
+                     storage.erased_offset == fx3_qspi::SAVE_OFFSET &&
+                     storage.erased_size == fx3_save::SLOT_SIZE,
+                 "wrap did not erase only the destination slot");
+    test_require(std::equal(before.begin(), before.begin() + fx3_qspi::SAVE_OFFSET,
+                            storage.bytes.begin()) &&
+                     std::equal(before.begin() + fx3_qspi::SAVE_OFFSET + fx3_save::SLOT_SIZE,
+                                before.end(),
+                                storage.bytes.begin() + fx3_qspi::SAVE_OFFSET + fx3_save::SLOT_SIZE),
+                 "wrap modified another slot, firmware, or FX code");
+    test_require(fx3_save::restore(flash, output.data(), output.size()) && output == next,
+                 "restore did not select the post-wrap snapshot");
 }
 
 static void test_callback_failure() {
@@ -187,6 +236,7 @@ int main() {
     test_empty_and_input_validation();
     test_append_restore_and_crc_fallback();
     test_interrupted_slot_and_wrap_erase();
+    test_four_snapshots_and_destination_only_wrap();
     test_callback_failure();
     test_failed_wrap_preserves_latest();
     std::puts("save_journal_tests: PASS");
