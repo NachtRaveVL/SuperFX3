@@ -29,13 +29,13 @@ static_assert((SAVE_OFFSET & (FLASH_SECTOR_SIZE - 1u)) == 0,
 static_assert((SAVE_SIZE & (FLASH_SECTOR_SIZE - 1u)) == 0,
               "The FX3 save partition size must be flash-sector aligned.");
 static_assert((FX_CODE_OFFSET & (FLASH_SECTOR_SIZE - 1u)) == 0,
-              "The FX code partition must start on a flash-sector boundary.");
+              "The FX ROM partition must start on a flash-sector boundary.");
 static_assert(FIRMWARE_OFFSET + FIRMWARE_SIZE == SAVE_OFFSET,
               "The firmware and save partitions must be contiguous.");
 static_assert(SAVE_OFFSET + SAVE_SIZE == FX_CODE_OFFSET,
-              "The save and FX code partitions must be contiguous.");
+              "The save and FX ROM partitions must be contiguous.");
 static_assert(FX_CODE_OFFSET == 0x100000u,
-              "The production FX code partition must remain at 0x100000.");
+              "The production FX ROM partition must remain at 0x100000.");
 static_assert(FX_CODE_OFFSET + FX_CODE_SIZE == FLASH_SIZE,
               "The three QSPI partitions must cover the complete W25Q32.");
 

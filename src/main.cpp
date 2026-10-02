@@ -70,13 +70,14 @@ int main() {
 
     snes_bus_init();
     const ParallelRomBus parallel = parallel_rom_gpio_bus();
-    snes_pio_set_rom_map(snes_rom_installed_map({parallel.context, parallel.read}));
+    const SnesRomInfo installed = snes_rom_installed_info({parallel.context, parallel.read});
+    snes_pio_set_rom_map(installed.map, installed.ram_size);
 
     // FX3 reads the game's FX-visible ROM mapping from the primary QSPI flash
     // through XIP. Parallel NOR holds the canonical game's SNES-visible mapping.
     if (!fx3_qspi_rom_init(g_fx_backend_context))
         panic("FX3 firmware overlaps the reserved QSPI save partition");
-    qspi_save_init(g_ram);
+    qspi_save_init(g_ram, snes_rom_has_persistent_ram(installed));
 
     FxBackend backend = fx_backend_create(&g_fx_backend_context);
     backend.save = qspi_save_now;

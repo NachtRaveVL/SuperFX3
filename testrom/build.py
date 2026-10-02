@@ -84,7 +84,8 @@ def patch_snes_checksum(path: Path) -> None:
 def validate_snes_rom(path: Path) -> None:
     data = path.read_bytes()
     _SNES_PACKER["normalize_fx3_rom"](data)
-    if len(data) != FX3_ROM_PARTITION_SIZE or data[0x7FD5:0x7FD8] != b"\x20\x17\x0C":
+    if len(data) != FX3_ROM_PARTITION_SIZE or data[0x7FBD] != 0x07 or \
+            data[0x7FD5:0x7FD8] != b"\x20\x18\x0C":
         raise SystemExit("diagnostic ROM header is not canonical 3 MiB FX3")
     reset = int.from_bytes(data[0x7FFC:0x7FFE], "little")
     if not 0x8000 <= reset <= 0xFFBF:
@@ -301,7 +302,8 @@ def self_test_build_helpers() -> None:
 
         supervisor = temp / "supervisor.bin"
         snes_data = bytearray(b"\xFF" * 0x8000)
-        snes_data[0x7FD5:0x7FD8] = b"\x20\x17\x0C"
+        snes_data[0x7FBD] = 0x07
+        snes_data[0x7FD5:0x7FD8] = b"\x20\x18\x0C"
         snes_data[0x7FFC:0x7FFE] = (0x8000).to_bytes(2, "little")
         supervisor.write_bytes(snes_data)
 

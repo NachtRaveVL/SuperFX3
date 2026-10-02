@@ -17,6 +17,15 @@ SnesRomInstaller::SnesRomInstaller(const ParallelRomBus& bus,
                                    const SnesRomInstallHooks& hooks)
     : parallel_rom_(bus), bus_(bus), hooks_(hooks) {}
 
+bool SnesRomInstaller::probe() {
+    if (!parallel_rom_.probe()) {
+        capacity_ = 0;
+        return false;
+    }
+    capacity_ = parallel_rom_.capacity();
+    return true;
+}
+
 bool SnesRomInstaller::active() const {
     // Explicit USB disconnect/cancel must stop an in-progress operation even
     // when the cartridge remains powered in standalone mode.
@@ -60,11 +69,12 @@ bool SnesRomInstaller::begin(UsbRomFileType type) {
     staging_dirty_ = false;
     memset(spill_, 0xFF, sizeof(spill_));
     memset(erased_sectors_, 0, sizeof(erased_sectors_));
+    memset(final_sectors_, 0, sizeof(final_sectors_));
     memset(copier_header_, 0xFF, sizeof(copier_header_));
     for (uint32_t& address : representative_)
         address = INVALID_ADDRESS;
     set_busy(true);
-    if (!parallel_rom_.is_supported_device()) {
+    if (!probe()) {
         fail(SnesRomInstallStatus::UnsupportedFlash);
         return false;
     }
@@ -133,7 +143,7 @@ bool SnesRomInstaller::stage(uint32_t file_offset, const uint8_t* data, size_t s
 }
 
 bool SnesRomInstaller::write_staged(uint32_t file_offset, const uint8_t* data, size_t size) {
-    constexpr uint32_t limit = UsbRomVolume::STAGING_PAGES * PAGE_SIZE;
+    const uint32_t limit = capacity_ + sizeof(spill_);
     if (!data || file_offset > limit || size > limit - file_offset) {
         fail(SnesRomInstallStatus::InvalidFile);
         return false;
@@ -144,8 +154,8 @@ bool SnesRomInstaller::write_staged(uint32_t file_offset, const uint8_t* data, s
             return false;
         }
         const uint32_t address = file_offset + static_cast<uint32_t>(index);
-        if (address >= ParallelRomProgrammer::CAPACITY) {
-            spill_[address - ParallelRomProgrammer::CAPACITY] = data[index];
+        if (address >= capacity_) {
+            spill_[address - capacity_] = data[index];
         } else {
             if (!load_staging_sector(address))
                 return false;
@@ -160,7 +170,7 @@ uint8_t SnesRomInstaller::read(uint32_t file_offset) const {
     if (status_ == SnesRomInstallStatus::Receiving || status_ == SnesRomInstallStatus::Ready)
         return read_staged(file_offset);
     if (status_ != SnesRomInstallStatus::Complete || type_ == UsbRomFileType::Raw)
-        return file_offset < ParallelRomProgrammer::CAPACITY ?
+        return file_offset < capacity_ ?
             bus_.read(bus_.context, file_offset) : 0xFF;
 
     const bool fx3_dump = installed_info_.map == SnesRomMap::Fx3 &&
@@ -180,9 +190,9 @@ uint8_t SnesRomInstaller::read(uint32_t file_offset) const {
 }
 
 uint8_t SnesRomInstaller::read_staged(uint32_t offset) const {
-    if (offset >= ParallelRomProgrammer::CAPACITY)
-        return offset < ParallelRomProgrammer::CAPACITY + sizeof(spill_) ?
-            spill_[offset - ParallelRomProgrammer::CAPACITY] : 0xFF;
+    if (offset >= capacity_)
+        return offset < capacity_ + sizeof(spill_) ?
+            spill_[offset - capacity_] : 0xFF;
     if (staging_sector_ != INVALID_ADDRESS && offset >= staging_sector_ &&
         offset - staging_sector_ < sizeof(sector_buffer_))
         return sector_buffer_[offset - staging_sector_];
@@ -201,17 +211,17 @@ void SnesRomInstaller::finish(uint32_t file_size) {
 bool SnesRomInstaller::finish(UsbRomFileType type, uint32_t file_size,
                               const uint16_t* pages, uint32_t page_count) {
     const uint32_t limit = type == UsbRomFileType::Raw ?
-        ParallelRomProgrammer::CAPACITY : 8u * MIB + 512u;
+        capacity_ : capacity_ + sizeof(spill_);
     if (!active()) {
         abort();
         return false;
     }
     if (status_ != SnesRomInstallStatus::Receiving || !pages || !file_size ||
-        file_size > limit || page_count > UsbRomVolume::STAGING_PAGES ||
+        file_size > limit || page_count > capacity_ / PAGE_SIZE + 4u ||
         page_count != (file_size + PAGE_SIZE - 1u) / PAGE_SIZE)
         return false;
     for (uint32_t i = 0; i < page_count; ++i) {
-        if (pages[i] >= UsbRomVolume::STAGING_PAGES)
+        if (pages[i] >= capacity_ / PAGE_SIZE + 4u)
             return false;
         for (uint32_t j = 0; j < i; ++j) {
             if (pages[i] == pages[j])
@@ -254,7 +264,7 @@ bool SnesRomInstaller::materialize_upload() {
 uint8_t SnesRomInstaller::read_source(void* context, uint32_t offset) {
     auto* installer = static_cast<SnesRomInstaller*>(context);
     return offset < installer->file_size_ ?
-        installer->bus_.read(installer->bus_.context, offset) : 0xFF;
+        installer->read_staged(offset) : 0xFF;
 }
 
 bool SnesRomInstaller::copy_to_temp(uint32_t source_offset, uint32_t size,
@@ -278,7 +288,7 @@ bool SnesRomInstaller::copy_to_temp(uint32_t source_offset, uint32_t size,
         const uint32_t copy_end = sector_end < end ? sector_end : end;
         for (uint32_t address = copy_begin; address < copy_end; ++address) {
             const uint32_t source = source_offset + address - destination;
-            sector_buffer_[address - sector_address] = bus_.read(bus_.context, source);
+            sector_buffer_[address - sector_address] = read_staged(source);
         }
 
         if (!parallel_rom_.erase_sector(sector_address))
@@ -300,23 +310,67 @@ bool SnesRomInstaller::copy_to_temp(uint32_t source_offset, uint32_t size,
     return true;
 }
 
-uint8_t SnesRomInstaller::read_install_source(uint32_t offset,
-                                              uint32_t destination_sector) const {
-    const uint32_t temporary = offset < 4u * MIB ?
-        UPPER_TEMP_BASE + offset : LOWER_TEMP_BASE + offset - 4u * MIB;
-    if (temporary >= destination_sector)
-        return bus_.read(bus_.context, temporary);
+bool SnesRomInstaller::read_install_source(const SnesRomInfo& info, uint32_t offset,
+                                           uint8_t& value) const {
+    const uint32_t staged = info.data_offset + offset;
+    if (staged >= capacity_) {
+        value = read_staged(staged);
+        return true;
+    }
+
+    const uint32_t sector = staged / ParallelRomProgrammer::SECTOR_SIZE;
+    if (!(final_sectors_[sector >> 3] & (1u << (sector & 7u)))) {
+        value = bus_.read(bus_.context, staged);
+        return true;
+    }
 
     const uint32_t representative = representative_[offset / PAGE_SIZE];
-    return representative == INVALID_ADDRESS ? 0xFF :
-        bus_.read(bus_.context, representative + offset % PAGE_SIZE);
+    if (representative == INVALID_ADDRESS)
+        return false;
+    value = bus_.read(bus_.context, representative + offset % PAGE_SIZE);
+    return true;
+}
+
+bool SnesRomInstaller::mapping_fits(const SnesRomInfo& info) {
+    for (uint32_t physical = 0; physical < capacity_; physical += PAGE_SIZE) {
+        bool assigned = false;
+        for (uint32_t address = physical; address < ParallelRomProgrammer::MAX_CAPACITY;
+             address += capacity_) {
+            uint32_t source = 0;
+            if (!snes_rom_source_offset(info, address, source))
+                continue;
+            if (!assigned) {
+                for (uint32_t i = 0; i < PAGE_SIZE; ++i)
+                    sector_buffer_[i] = read_staged(info.data_offset + source + i);
+                assigned = true;
+                continue;
+            }
+            for (uint32_t i = 0; i < PAGE_SIZE; ++i) {
+                if (sector_buffer_[i] != read_staged(info.data_offset + source + i))
+                    return false;
+            }
+        }
+    }
+    return true;
 }
 
 bool SnesRomInstaller::program_sector(uint32_t address, const SnesRomInfo& info) {
     for (uint32_t index = 0; index < ParallelRomProgrammer::SECTOR_SIZE; ++index) {
-        uint32_t source = 0;
-        sector_buffer_[index] = snes_rom_source_offset(info, address + index, source) ?
-            read_install_source(source, address) : 0xFF;
+        bool assigned = false;
+        uint8_t value = 0xFF;
+        for (uint32_t alias = address + index;
+             alias < ParallelRomProgrammer::MAX_CAPACITY; alias += capacity_) {
+            uint32_t source = 0;
+            if (!snes_rom_source_offset(info, alias, source))
+                continue;
+            uint8_t candidate = 0;
+            if (!read_install_source(info, source, candidate) ||
+                (assigned && candidate != value))
+                return false;
+            value = candidate;
+            assigned = true;
+        }
+        sector_buffer_[index] = value;
     }
 
     if (!parallel_rom_.erase_sector(address))
@@ -337,9 +391,24 @@ bool SnesRomInstaller::program_sector(uint32_t address, const SnesRomInfo& info)
     for (uint32_t page_address = address;
          page_address < address + ParallelRomProgrammer::SECTOR_SIZE;
          page_address += PAGE_SIZE) {
-        uint32_t source = 0;
-        if (snes_rom_source_offset(info, page_address, source))
-            representative_[source / PAGE_SIZE] = page_address;
+        for (uint32_t alias = page_address;
+             alias < ParallelRomProgrammer::MAX_CAPACITY; alias += capacity_) {
+            uint32_t source = 0;
+            if (snes_rom_source_offset(info, alias, source))
+                representative_[source / PAGE_SIZE] = page_address;
+        }
+    }
+    final_sectors_[sector >> 3] |= static_cast<uint8_t>(1u << (sector & 7u));
+    return true;
+}
+
+bool SnesRomInstaller::program_range(uint32_t begin, uint32_t end, bool descending,
+                                     const SnesRomInfo& info) {
+    const uint32_t count = (end - begin) / ParallelRomProgrammer::SECTOR_SIZE;
+    for (uint32_t step = 0; step < count; ++step) {
+        const uint32_t sector = descending ? count - 1u - step : step;
+        if (!program_sector(begin + sector * ParallelRomProgrammer::SECTOR_SIZE, info))
+            return false;
     }
     return true;
 }
@@ -347,11 +416,14 @@ bool SnesRomInstaller::program_sector(uint32_t address, const SnesRomInfo& info)
 void SnesRomInstaller::build_representatives(const SnesRomInfo& info) {
     for (uint32_t& address : representative_)
         address = INVALID_ADDRESS;
-    for (uint32_t address = 0; address < ParallelRomProgrammer::CAPACITY;
+    for (uint32_t address = 0; address < capacity_;
          address += PAGE_SIZE) {
-        uint32_t source = 0;
-        if (snes_rom_source_offset(info, address, source))
-            representative_[source / PAGE_SIZE] = address;
+        for (uint32_t alias = address;
+             alias < ParallelRomProgrammer::MAX_CAPACITY; alias += capacity_) {
+            uint32_t source = 0;
+            if (snes_rom_source_offset(info, alias, source))
+                representative_[source / PAGE_SIZE] = address;
+        }
     }
 }
 
@@ -363,16 +435,17 @@ bool SnesRomInstaller::install(const SnesRomInfo& info) {
             copier_header_[index] = bus_.read(bus_.context, index);
     }
 
-    // Preserve the complete mapped source in the upper 8 MiB before replacing
-    // the raw upload. The halves are swapped so lower final addresses can be
-    // generated first without destroying a source half needed later.
-    if (info.size > 4u * MIB &&
-        !copy_to_temp(info.data_offset + 4u * MIB, info.size - 4u * MIB,
-                      LOWER_TEMP_BASE, true))
+    if (!mapping_fits(info))
         return false;
-    const uint32_t lower_size = info.size < 4u * MIB ? info.size : 4u * MIB;
-    if (!copy_to_temp(info.data_offset, lower_size, UPPER_TEMP_BASE, false))
-        return false;
+
+    SnesRomInfo source_info = info;
+    const uint32_t header_size = info.data_offset >= 4u * MIB ?
+        info.data_offset - 4u * MIB : info.data_offset;
+    if (header_size == 512u) {
+        if (!copy_to_temp(info.data_offset, info.size, info.data_offset - header_size, false))
+            return false;
+        source_info.data_offset -= header_size;
+    }
 
     if (info.map == SnesRomMap::Fx3) {
         // Materialize the GSU's 3 MiB window, mirroring smaller canonical ROMs.
@@ -383,7 +456,8 @@ bool SnesRomInstaller::install(const SnesRomInfo& info) {
             if (!snes_rom_source_offset(info, 0x400000u + offset, source))
                 return false;
             for (uint32_t i = 0; i < PAGE_SIZE; ++i)
-                sector_buffer_[i] = bus_.read(bus_.context, UPPER_TEMP_BASE + source + i);
+                if (!read_install_source(source_info, source + i, sector_buffer_[i]))
+                    return false;
             if (!hooks_.program_fx(hooks_.context, offset, sector_buffer_, PAGE_SIZE))
                 return false;
             if (hooks_.service)
@@ -391,33 +465,53 @@ bool SnesRomInstaller::install(const SnesRomInfo& info) {
         }
     }
 
-    // Ascending order is intentional. For extended maps, the lower 8 MiB is
-    // completed before either temporary half is overwritten. Within the upper
-    // 8 MiB, every source page is consumed or represented by an earlier final
-    // sector before its temporary sector is erased.
-    for (uint32_t address = 0; address < ParallelRomProgrammer::CAPACITY;
-         address += ParallelRomProgrammer::SECTOR_SIZE) {
-        if (!program_sector(address, info))
+    const uint32_t half = capacity_ / 2u;
+    if (source_info.map == SnesRomMap::LoRom) {
+        if (!program_range(0, capacity_, true, source_info))
             return false;
+    } else if (source_info.map == SnesRomMap::HiRom && capacity_ > 4u * MIB) {
+        if (!program_range(4u * MIB, 8u * MIB, false, source_info) ||
+            (capacity_ > 8u * MIB &&
+             !program_range(12u * MIB, capacity_, false, source_info)) ||
+            !program_range(0, 4u * MIB, false, source_info) ||
+            (capacity_ > 8u * MIB &&
+             !program_range(8u * MIB, 12u * MIB, false, source_info)))
+            return false;
+    } else if (source_info.map == SnesRomMap::ExLoRom ||
+               source_info.map == SnesRomMap::ExHiRom) {
+        if (!program_range(half, capacity_, false, source_info) ||
+            !program_range(0, half, false, source_info))
+            return false;
+    } else if (source_info.map == SnesRomMap::Fx3) {
+        const bool source_upper = source_info.data_offset >= half;
+        if (!program_range(source_upper ? 0 : half, source_upper ? half : capacity_,
+                           false, source_info) ||
+            !program_range(source_upper ? half : 0, source_upper ? capacity_ : half,
+                           false, source_info))
+            return false;
+    } else if (!program_range(0, capacity_, false, source_info)) {
+        return false;
     }
-    build_representatives(info);
+    build_representatives(source_info);
     // Commit the map descriptor only after all mapped bytes have verified.
     // $7E is SNES WRAM, so this sector was emitted erased and has no ROM source.
-    uint8_t descriptor[SNES_ROM_DESCRIPTOR_SIZE];
-    snes_rom_descriptor(info, descriptor);
-    for (uint32_t step = 0; step < sizeof(descriptor); ++step) {
-        const uint32_t index = (step + 4u) % sizeof(descriptor); // Magic last.
-        if (!active() || !parallel_rom_.program_byte(SNES_ROM_DESCRIPTOR_ADDRESS + index,
-                                                    descriptor[index]))
+    if (capacity_ == ParallelRomProgrammer::MAX_CAPACITY) {
+        uint8_t descriptor[SNES_ROM_DESCRIPTOR_SIZE];
+        snes_rom_descriptor(info, descriptor);
+        for (uint32_t step = 0; step < sizeof(descriptor); ++step) {
+            const uint32_t index = (step + 4u) % sizeof(descriptor); // Magic last.
+            if (!active() || !parallel_rom_.program_byte(SNES_ROM_DESCRIPTOR_ADDRESS + index,
+                                                         descriptor[index]))
+                return false;
+        }
+        if (!parallel_rom_.verify(SNES_ROM_DESCRIPTOR_ADDRESS, descriptor, sizeof(descriptor)))
             return false;
     }
-    if (!parallel_rom_.verify(SNES_ROM_DESCRIPTOR_ADDRESS, descriptor, sizeof(descriptor)))
-        return false;
     return true;
 }
 
 bool SnesRomInstaller::verify_raw() const {
-    if (file_size_ != ParallelRomProgrammer::CAPACITY)
+    if (file_size_ != capacity_)
         return false;
     for (uint32_t address = 0; address < file_size_; ++address) {
         (void)bus_.read(bus_.context, address);

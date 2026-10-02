@@ -37,7 +37,7 @@ bool fx3_qspi_rom_init(Rp2350FxBackendContext& context) {
     return true;
 }
 
-// Reads one byte from the linear FX code image reserved in primary QSPI flash.
+// Reads one byte from the linear GSU-visible ROM reserved in primary QSPI flash.
 uint8_t __not_in_flash_func(fx3_qspi_rom_read)(void* context, uint32_t offset) {
     auto* ctx = static_cast<Rp2350FxBackendContext*>(context);
     if (!ctx || !ctx->rom || offset >= ctx->rom_size)

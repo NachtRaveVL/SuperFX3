@@ -30,21 +30,25 @@ struct UsbRomSink {
 class UsbRomVolume {
 public:
     static constexpr uint32_t BLOCK_SIZE = 512;
-    static constexpr uint32_t MAX_FILE_SIZE = 16u * 1024u * 1024u + 512u;
+    static constexpr uint32_t MAX_CAPACITY = 16u * 1024u * 1024u;
+    static constexpr uint32_t MAX_SOURCE_OVERHEAD = 512u + 256u;
+    static constexpr uint32_t MAX_FILE_SIZE = MAX_CAPACITY + MAX_SOURCE_OVERHEAD;
     static constexpr uint32_t PAGE_SIZE = 4096;
-    static constexpr uint32_t STAGING_PAGES = 16u * 1024u * 1024u / PAGE_SIZE + 4u;
+    static constexpr uint32_t MAX_STAGING_PAGES = MAX_CAPACITY / PAGE_SIZE + 4u;
     static constexpr uint32_t FIRST_UPLOAD_BLOCK = 89;
     // Four RAM spill pages also leave room for host-created filesystem metadata
-    // alongside a full 16 MiB image. Never advertise unstorable data sectors.
-    static constexpr uint32_t BLOCK_COUNT = FIRST_UPLOAD_BLOCK + STAGING_PAGES * 8u;
+    // alongside a full device image. Never advertise unstorable data sectors.
+    static constexpr uint32_t MAX_BLOCK_COUNT = FIRST_UPLOAD_BLOCK + MAX_STAGING_PAGES * 8u;
 
     explicit UsbRomVolume(const UsbRomSink& sink);
+    void set_capacity(uint32_t capacity);
     void reset();
     bool read(uint32_t lba, uint8_t* data, size_t size) const;
     bool write(uint32_t lba, const uint8_t* data, size_t size);
     bool flush();
     bool eject();
     bool ejected() const { return completion_sent_; }
+    uint32_t block_count() const { return block_count_; }
 
 private:
     static constexpr uint32_t SECTORS_PER_CLUSTER = 8;
@@ -56,13 +60,18 @@ private:
     static constexpr uint32_t DATA_START = ROOT_START + ROOT_SECTORS;
     static constexpr uint32_t README_CLUSTER = 2;
 
+    void set_fat_entry(uint16_t cluster, uint16_t value);
     uint16_t fat_entry(uint16_t cluster) const;
 
     UsbRomSink sink_;
     uint8_t fat_[FAT_SECTORS * BLOCK_SIZE]{};
     uint8_t root_[ROOT_SECTORS * BLOCK_SIZE]{};
-    uint8_t received_[STAGING_PAGES]{}; // Eight 512-byte sector-presence bits per page.
-    uint16_t pages_[STAGING_PAGES]{};
+    uint8_t received_[MAX_STAGING_PAGES]{}; // Eight 512-byte sector-presence bits per page.
+    uint16_t pages_[MAX_STAGING_PAGES]{};
+    uint32_t capacity_ = MAX_CAPACITY;
+    uint32_t staging_pages_ = MAX_STAGING_PAGES;
+    uint32_t block_count_ = MAX_BLOCK_COUNT;
+    bool fat12_ = false;
     bool sink_started_ = false;
     bool completion_sent_ = false;
 };

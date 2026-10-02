@@ -11,7 +11,7 @@
 #include "../../storage/snes_rom_layout.h"
 
 /// Selects the installed ROM's SRAM windows while the bus is disconnected.
-void snes_pio_set_rom_map(SnesRomMap map);
+void snes_pio_set_rom_map(SnesRomMap map, uint32_t ram_size = 128u * 1024u);
 
 /// Starts the PIO state machines that monitor SNES bus transactions.
 void snes_pio_start(SuperFx& fx);

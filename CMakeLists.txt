@@ -101,7 +101,7 @@ pico_enable_stdio_uart(superfx3 0)
 pico_enable_stdio_usb(superfx3 0)
 pico_add_extra_outputs(superfx3)
 # The diagnostic ROM is intentionally a separate target. Firmware-only builds do
-# not need cc65, while `fx3_testrom` gives us the 65816 supervisor and private GSU ROM.
+# not need cc65, while `fx3_testrom` gives us the 65816 supervisor and GSU-visible ROM.
 find_package(Python3 3.10 COMPONENTS Interpreter REQUIRED)
 
 add_custom_command(

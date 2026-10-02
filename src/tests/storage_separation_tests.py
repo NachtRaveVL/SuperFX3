@@ -23,7 +23,7 @@ def main() -> None:
     require(layout, "SAVE_OFFSET = FIRMWARE_OFFSET + FIRMWARE_SIZE",
             "QSPI save partition does not follow firmware")
     require(layout, "FX_CODE_OFFSET = SAVE_OFFSET + SAVE_SIZE",
-            "QSPI FX code partition does not follow saves")
+            "QSPI FX ROM partition does not follow saves")
     require(layout, "FX_CODE_OFFSET + FX_CODE_SIZE == FLASH_SIZE",
             "QSPI partitions do not cover exactly one W25Q32")
 
@@ -47,7 +47,7 @@ def main() -> None:
 
     installer = (ROOT / "storage" / "snes_rom_installer.cpp").read_text()
     require(installer, "parallel_rom_", "game installer target is not named as parallel ROM")
-    require(installer, "ParallelRomProgrammer::CAPACITY",
+    require(installer, "ParallelRomProgrammer::MAX_CAPACITY",
             "game installer is not bounded to the external parallel ROM")
     reject(installer, "fx3_qspi", "game installer references the QSPI layout")
     reject(installer, "fx3_save", "game installer references the QSPI save journal")

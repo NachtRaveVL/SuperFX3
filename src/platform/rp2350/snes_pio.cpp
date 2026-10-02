@@ -40,8 +40,12 @@ static std::atomic<bool> g_rom_blocked {false};
 
 static SuperFx* g_fx = nullptr;
 static SnesRomMap g_rom_map = SnesRomMap::Fx3Physical;
+static uint32_t g_ram_size = 128u * 1024u;
 
-void snes_pio_set_rom_map(SnesRomMap map) { g_rom_map = map; }
+void snes_pio_set_rom_map(SnesRomMap map, uint32_t ram_size) {
+    g_rom_map = map;
+    g_ram_size = ram_size <= 128u * 1024u ? ram_size : 128u * 1024u;
+}
 
 static uint g_control_sm = 0;
 static uint g_write_address_sm = 0;
@@ -103,7 +107,9 @@ static inline bool snes_gsu_ram_offset(const SuperFx& fx, uint32_t address, uint
         // Extended LoROM needs the upper halves of $70/$71 for unique ROM.
         if ((bank & 0x7Fu) >= 0x70u && (bank & 0x7Fu) <= 0x7Du && addr < 0x8000u) {
             offset = ((static_cast<uint32_t>(bank & 3u) << 15) | addr);
-            return true;
+            if (g_ram_size)
+                offset &= g_ram_size - 1u;
+            return g_ram_size != 0;
         }
         return false;
     }
@@ -111,14 +117,18 @@ static inline bool snes_gsu_ram_offset(const SuperFx& fx, uint32_t address, uint
         if ((bank & 0x7Fu) >= 0x20u && (bank & 0x7Fu) <= 0x3Fu &&
             addr >= 0x6000u && addr < 0x8000u) {
             offset = (static_cast<uint32_t>(bank & 15u) << 13) | (addr & 0x1FFFu);
-            return true;
+            if (g_ram_size)
+                offset &= g_ram_size - 1u;
+            return g_ram_size != 0;
         }
         return false;
     }
 
     if (bank == 0x70 || bank == 0x71) {
         offset = (static_cast<uint32_t>(bank - 0x70) << 16) | addr;
-        return true;
+        if (g_ram_size)
+            offset &= g_ram_size - 1u;
+        return g_ram_size != 0;
     }
 
     if (fx.config().chip == FxChip::FX3)
@@ -127,12 +137,16 @@ static inline bool snes_gsu_ram_offset(const SuperFx& fx, uint32_t address, uint
     if ((bank <= 0x3E || (bank >= 0x80 && bank <= 0xBE)) &&
         addr >= 0x6000 && addr <= 0x7FFF) {
         offset = addr - 0x6000;
-        return true;
+        if (g_ram_size)
+            offset &= g_ram_size - 1u;
+        return g_ram_size != 0;
     }
 
     if (bank == 0xF0 || bank == 0xF1) {
         offset = (static_cast<uint32_t>(bank - 0xF0) << 16) | addr;
-        return true;
+        if (g_ram_size)
+            offset &= g_ram_size - 1u;
+        return g_ram_size != 0;
     }
     return false;
 }

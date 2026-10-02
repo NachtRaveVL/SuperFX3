@@ -147,7 +147,7 @@ void snes_bus_init() {
     snes_take_local_reset();
     gpio_put(SNES_I_RESET_N_PIN, 1);
 
-    // The single 128-Mbit-capable parallel ROM is rated for 100 ns.
+    // Supported parallel ROMs have a worst-case 100 ns random-read time.
     const uint32_t sys_hz = clock_get_hz(clk_sys);
     g_rom_access_cycles = ((sys_hz + 9999999u) / 10000000u) + 2;
     g_rom_address_setup_cycles = ((sys_hz + 49999999u) / 50000000u) + 1;
@@ -188,7 +188,7 @@ void snes_busy_irq_write(void*, bool asserted) {
 uint8_t snes_rom_read(void* context, uint32_t address) {
     (void)context;
 
-    // FX3 executes private code from QSPI and must never steal the parallel bus.
+    // FX3 executes from the QSPI GSU-visible ROM and must never steal the parallel bus.
     if (!g_console_present || (g_fx && g_fx->config().chip == FxChip::FX3))
         return 0xFF;
 

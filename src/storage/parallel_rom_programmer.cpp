@@ -17,6 +17,7 @@ constexpr uint8_t CMD_PROGRAM = 0xA0;
 constexpr uint8_t CMD_ERASE_SETUP = 0x80;
 constexpr uint8_t CMD_CHIP_ERASE = 0x10;
 constexpr uint8_t CMD_SECTOR_ERASE = 0x30;
+constexpr uint8_t CMD_CFI_QUERY = 0x98;
 
 constexpr uint8_t DQ7 = 0x80;
 constexpr uint8_t DQ5 = 0x20;
@@ -48,10 +49,32 @@ ParallelRomId ParallelRomProgrammer::read_id() const {
     return id;
 }
 
-bool ParallelRomProgrammer::is_supported_device() const {
-    const ParallelRomId id = read_id();
-    return id.manufacturer == 0x9D && id.device_code_1 == 0x7E &&
-           id.device_code_2 == 0x21 && id.device_code_3 == 0x01;
+bool ParallelRomProgrammer::probe() {
+    capacity_ = 0;
+    command(0xAAu, CMD_CFI_QUERY);
+    const bool query = bus_.read(bus_.context, 0x20u) == 'Q' &&
+                       bus_.read(bus_.context, 0x22u) == 'R' &&
+                       bus_.read(bus_.context, 0x24u) == 'Y';
+    const uint16_t command_set = static_cast<uint16_t>(bus_.read(bus_.context, 0x26u)) |
+        (static_cast<uint16_t>(bus_.read(bus_.context, 0x28u)) << 8);
+    const uint8_t size_power = bus_.read(bus_.context, 0x4Eu);
+    const uint8_t regions = bus_.read(bus_.context, 0x58u);
+    const uint16_t sector_count_minus_one =
+        static_cast<uint16_t>(bus_.read(bus_.context, 0x5Au)) |
+        (static_cast<uint16_t>(bus_.read(bus_.context, 0x5Cu)) << 8);
+    const uint16_t sector_size_units =
+        static_cast<uint16_t>(bus_.read(bus_.context, 0x5Eu)) |
+        (static_cast<uint16_t>(bus_.read(bus_.context, 0x60u)) << 8);
+    reset();
+
+    if (!query || command_set != 2u || size_power < 20u || size_power > 24u ||
+        regions != 1u || sector_size_units * 256u != SECTOR_SIZE)
+        return false;
+    const uint32_t capacity = 1u << size_power;
+    if ((static_cast<uint32_t>(sector_count_minus_one) + 1u) * SECTOR_SIZE != capacity)
+        return false;
+    capacity_ = capacity;
+    return true;
 }
 
 bool ParallelRomProgrammer::wait_ready(uint32_t address, uint8_t expected,
@@ -74,6 +97,8 @@ bool ParallelRomProgrammer::wait_ready(uint32_t address, uint8_t expected,
 }
 
 bool ParallelRomProgrammer::erase_chip(uint64_t timeout_us) const {
+    if (!capacity_)
+        return false;
     command(UNLOCK_AAA, 0xAA);
     command(UNLOCK_555, 0x55);
     command(UNLOCK_AAA, CMD_ERASE_SETUP);
@@ -87,6 +112,8 @@ bool ParallelRomProgrammer::erase_chip(uint64_t timeout_us) const {
 }
 
 bool ParallelRomProgrammer::erase_sector(uint32_t address, uint64_t timeout_us) const {
+    if (!capacity_ || address >= capacity_)
+        return false;
     address &= ~(SECTOR_SIZE - 1u);
     command(UNLOCK_AAA, 0xAA);
     command(UNLOCK_555, 0x55);
@@ -102,7 +129,7 @@ bool ParallelRomProgrammer::erase_sector(uint32_t address, uint64_t timeout_us) 
 
 bool ParallelRomProgrammer::program_byte(uint32_t address, uint8_t data,
                                          uint64_t timeout_us) const {
-    if (address >= CAPACITY)
+    if (!capacity_ || address >= capacity_)
         return false;
     if (data == 0xFF)
         return bus_.read(bus_.context, address) == 0xFF;
@@ -119,7 +146,7 @@ bool ParallelRomProgrammer::program_byte(uint32_t address, uint8_t data,
 
 bool ParallelRomProgrammer::verify(uint32_t address, const uint8_t* data,
                                    size_t size) const {
-    if (!data || address > CAPACITY || size > CAPACITY - address)
+    if (!data || !capacity_ || address > capacity_ || size > capacity_ - address)
         return false;
     for (size_t index = 0; index < size; ++index) {
         if (bus_.read(bus_.context, address + static_cast<uint32_t>(index)) != data[index])

@@ -29,6 +29,7 @@ uint32_t g_saved_crc = 0;
 bool g_last_usb = false;
 bool g_last_reset = false;
 bool g_safe = false;
+std::atomic<bool> g_enabled {true};
 std::atomic<bool> g_ok {true};
 std::atomic_flag g_saving = ATOMIC_FLAG_INIT;
 bool g_have_save = false;
@@ -86,9 +87,10 @@ void save_snapshot(void*) {
 }
 }
 
-void qspi_save_init(std::atomic<uint8_t>* ram) {
+void qspi_save_init(std::atomic<uint8_t>* ram, bool enabled) {
     g_ram = ram;
-    g_have_save = fx3_save::restore(flash(), g_snapshot, sizeof(g_snapshot));
+    g_enabled = enabled;
+    g_have_save = enabled && fx3_save::restore(flash(), g_snapshot, sizeof(g_snapshot));
     if (g_have_save) {
         for (uint32_t i = 0; i < sizeof(g_snapshot); ++i)
             ram[i].store(g_snapshot[i], std::memory_order_relaxed);
@@ -102,7 +104,16 @@ void qspi_save_init(std::atomic<uint8_t>* ram) {
     g_ok = true;
 }
 
+void qspi_save_set_enabled(bool enabled) {
+    g_enabled = enabled;
+    g_last_usb = snes_bus_usb_mode();
+    g_last_reset = !g_last_usb && !gpio_get(SNES_I_RESET_N_PIN);
+    g_ok = true;
+}
+
 bool qspi_save_now(void*) {
+    if (!g_enabled)
+        return true;
     // Reset/disconnect fallback runs on core 0; the instruction runs on core 1.
     // Never wait for the other writer while it may be requesting our lockout.
     if (!g_ram || g_saving.test_and_set(std::memory_order_acquire))
@@ -116,7 +127,7 @@ bool qspi_save_now(void*) {
 }
 
 void qspi_save_task() {
-    if (!g_ram)
+    if (!g_ram || !g_enabled)
         return;
     const bool usb = snes_bus_usb_mode();
     const bool reset = !usb && !gpio_get(SNES_I_RESET_N_PIN);

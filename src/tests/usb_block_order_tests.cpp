@@ -23,7 +23,7 @@ static bool ordered_complete(void* p, UsbRomFileType t, uint32_t n,
 
 int main() {
     Sink sink;
-    sink.bytes.resize(UsbRomVolume::STAGING_PAGES * 4096u, 0xFF);
+    sink.bytes.resize(UsbRomVolume::MAX_STAGING_PAGES * 4096u, 0xFF);
     UsbRomVolume volume({&sink, begin, strict_write, read, complete, flush});
     std::array<uint8_t, 512> block{};
     block.fill(0xA5);
@@ -68,7 +68,7 @@ int main() {
     put16(block.data(), 6, 4);
     put16(block.data(), 8, 0xFFFF);
     test_require(volume.write(1, block.data(), block.size()) && !volume.eject(), "missing blocks accepted");
-    test_require(!volume.write(UsbRomVolume::BLOCK_COUNT, block.data(), block.size()), "bounds ignored");
-    test_require(volume.write(UsbRomVolume::BLOCK_COUNT - 1, block.data(), block.size()), "spill page rejected");
+    test_require(!volume.write(volume.block_count(), block.data(), block.size()), "bounds ignored");
+    test_require(volume.write(volume.block_count() - 1, block.data(), block.size()), "spill page rejected");
     std::puts("usb_block_order_tests: PASS");
 }

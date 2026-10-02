@@ -9,6 +9,7 @@
 
 #include "platform/rp2350/parallel_rom_gpio.h"
 #include "platform/rp2350/qspi_rom.h"
+#include "platform/rp2350/qspi_save.h"
 #include "platform/rp2350/snes_bus.h"
 #include "platform/rp2350/snes_pio.h"
 #include "storage/snes_rom_installer.h"
@@ -69,7 +70,11 @@ void usb_rom_loader_set_enabled(bool enabled) {
         return;
     g_enabled = enabled;
     if (enabled) {
-        volume().reset();
+        if (!installer().probe()) {
+            g_enabled = false;
+            return;
+        }
+        volume().set_capacity(installer().capacity());
         tud_connect();
     } else {
         installer().abort();
@@ -81,15 +86,18 @@ void usb_rom_loader_task() {
     if (!g_initialized || !g_enabled)
         return;
     tud_task();
-    if (installer().status() == SnesRomInstallStatus::Ready && installer().process())
-        snes_pio_set_rom_map(installer().installed_map());
+    if (installer().status() == SnesRomInstallStatus::Ready && installer().process()) {
+        const SnesRomInfo installed = installer().installed_info();
+        snes_pio_set_rom_map(installed.map, installed.ram_size);
+        qspi_save_set_enabled(snes_rom_has_persistent_ram(installed));
+    }
 }
 
 extern "C" void tud_msc_inquiry_cb(uint8_t, uint8_t vendor_id[8],
                                     uint8_t product_id[16], uint8_t product_rev[4]) {
     memcpy(vendor_id, "NR-RETRO", 8);
     memcpy(product_id, "SUPERFX3 LOADER ", 16);
-    memcpy(product_rev, "0100", 4);
+    memcpy(product_rev, "0101", 4);
 }
 
 extern "C" bool tud_msc_test_unit_ready_cb(uint8_t lun) {
@@ -101,7 +109,7 @@ extern "C" bool tud_msc_test_unit_ready_cb(uint8_t lun) {
 
 extern "C" void tud_msc_capacity_cb(uint8_t, uint32_t* block_count,
                                      uint16_t* block_size) {
-    *block_count = UsbRomVolume::BLOCK_COUNT;
+    *block_count = volume().block_count();
     *block_size = UsbRomVolume::BLOCK_SIZE;
 }
 

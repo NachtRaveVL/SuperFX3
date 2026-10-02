@@ -143,6 +143,16 @@ static void test_fx3_frontend_round_trip() {
                  "routed register read returned the wrong byte");
     test_require(inject_read(0x70, 0x1234) == 0xA5,
                  "routed SRAM read returned the wrong byte");
+
+    snes_pio_set_rom_map(SnesRomMap::Fx3, 8u * 1024u);
+    inject_write(0x70, 0x3234, 0x6C);
+    test_require(memory.ram[0x1234] == 0x6C && inject_read(0x71, 0xF234) == 0x6C,
+                 "declared SRAM size did not mirror the CPU-visible window");
+    snes_pio_set_rom_map(SnesRomMap::Fx3, 0);
+    inject_write(0x70, 0x1234, 0x99);
+    test_require(memory.ram[0x1234] == 0x6C &&
+                     inject_read_word(0x70, 0x1234, true) == 0,
+                 "ROM-only cartridge exposed shared SRAM to the CPU");
 }
 
 static void test_noncartridge_reads_do_not_drive() {

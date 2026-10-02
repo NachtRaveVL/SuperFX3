@@ -49,7 +49,7 @@ def main() -> int:
         "--rom-offset",
         type=parse_size,
         default=None,
-        help="compatibility check; production FX code offset is fixed at 0x100000",
+        help="compatibility check; production FX ROM offset is fixed at 0x100000",
     )
     args = parser.parse_args()
 
@@ -66,19 +66,19 @@ def main() -> int:
     if args.flash_size != QSPI_FLASH_SIZE:
         parser.error("the production SuperFX3 QSPI layout requires exactly 4 MiB")
     if len(fx_code) > FX3_CODE_SIZE:
-        parser.error(f"FX code is {len(fx_code)} bytes; maximum is {FX3_CODE_SIZE}")
+        parser.error(f"FX ROM is {len(fx_code)} bytes; maximum is {FX3_CODE_SIZE}")
 
     code_offset = FX3_CODE_OFFSET if args.rom_offset is None else args.rom_offset
 
     if code_offset != FX3_CODE_OFFSET:
-        parser.error("the production FX code partition must start at 0x100000")
+        parser.error("the production FX ROM partition must start at 0x100000")
     if len(firmware) > FX3_FIRMWARE_SIZE:
         parser.error(
             f"firmware ends at 0x{len(firmware):X}, overlapping the save journal "
             f"at 0x{FX3_SAVE_OFFSET:X}"
         )
     if FX3_CODE_OFFSET != FX3_SAVE_OFFSET + FX3_SAVE_SIZE:
-        parser.error("FX code partition does not immediately follow the save journal")
+        parser.error("FX ROM partition does not immediately follow the save journal")
     if FX3_CODE_OFFSET + FX3_CODE_SIZE != QSPI_FLASH_SIZE:
         parser.error("the three QSPI partitions do not cover the W25Q32")
 
@@ -93,7 +93,7 @@ def main() -> int:
         f"0x{FX3_SAVE_OFFSET + FX3_SAVE_SIZE - 1:06X} (erased journal)"
     )
     print(
-        f"FX code  : 0x{FX3_CODE_OFFSET:06X}-"
+        f"FX ROM   : 0x{FX3_CODE_OFFSET:06X}-"
         f"0x{FX3_CODE_OFFSET + FX3_CODE_SIZE - 1:06X} "
         f"({len(fx_code)} bytes used, padded with 0xFF)"
     )

@@ -9,5 +9,5 @@
 
 #include "storage/parallel_rom_programmer.h"
 
-/// Returns the byte-wide IS29GL128 bus implementation used only in USB mode.
+/// Returns the byte-wide AMD/CFI parallel-ROM bus used only in local mode.
 ParallelRomBus parallel_rom_gpio_bus();

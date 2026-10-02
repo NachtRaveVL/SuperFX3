@@ -18,7 +18,7 @@ fx3_test_parallel_rom.bin
 fx3_test_manifest.json
 ```
 
-`fx3_test.sfc` is the authoritative 3 MiB canonical FX3 ROM, with ROM type `$17`. Its header declares the next power-of-two capacity, 4 MiB (`$0C`), as required by the SNES size field. Copy this file to `SUPERFX3` and safely eject to program both flashes through the normal FX3 installer.
+`fx3_test.sfc` is the authoritative 3 MiB canonical FX3 ROM, with ROM type `$18` because the suite includes cold-boot save/restore tests. Its header declares 128 KiB of expansion SRAM and the next power-of-two ROM capacity, 4 MiB (`$0C`). Copy this file to `SUPERFX3` and safely eject to program both flashes through the normal FX3 installer.
 
 `fx3_test_fxrom.bin` is the compact 32 KiB linked GSU payload for symbol generation, disassembly, and bench work. It is an intermediate artifact, not the game-side QSPI image.
 

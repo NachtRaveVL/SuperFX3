@@ -58,5 +58,16 @@ int main() {
     ram[100].store(0);
     qspi_save_init(ram);
     test_require(ram[100].load() == 0x33, "disconnect save did not restore");
+
+    const unsigned programs = sdk_flash::programs;
+    ram[100].store(0x77);
+    qspi_save_init(ram, false);
+    test_require(ram[100].load() == 0x77 && qspi_save_now(nullptr) &&
+                     sdk_flash::programs == programs,
+                 "non-battery cartridge restored or committed SRAM");
+    qspi_save_set_enabled(true);
+    qspi_save_task();
+    test_require(sdk_flash::programs == programs,
+                 "enabling persistence treated the current USB state as an edge");
     std::puts("qspi_save_integration_tests: PASS");
 }
