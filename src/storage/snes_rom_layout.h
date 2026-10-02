@@ -15,6 +15,7 @@ enum class SnesRomMap : uint8_t {
     ExLoRom,
     ExHiRom,
     Fx3Physical, // Prepacked bus image with the original full $70/$71 SRAM windows.
+    Fx3, // Canonical FX3 ROM, up to 4 MiB; the first 3 MiB are FX-visible.
 };
 
 struct SnesRomReader {
@@ -28,10 +29,10 @@ struct SnesRomInfo {
     uint32_t data_offset;
 };
 
-/// Detects headered or unheadered LoROM/HiROM/ExLoROM/ExHiROM through 8 MiB.
+/// Detects LoROM/HiROM/ExLoROM/ExHiROM and canonical or striped FX3 ROMs.
 bool snes_rom_detect(const SnesRomReader& reader, uint32_t file_size,
                      bool smc_extension, SnesRomInfo& info);
-/// Maps a 24-bit cartridge bus address to a source file offset.
+/// Maps a physical parallel-ROM address to a canonical source offset; SRAM overlays remain separate.
 bool snes_rom_source_offset(const SnesRomInfo& info, uint32_t bus_address,
                             uint32_t& source_offset);
 

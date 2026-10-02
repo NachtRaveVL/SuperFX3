@@ -8,6 +8,7 @@
 #include "usb_rom_loader.h"
 
 #include "platform/rp2350/parallel_rom_gpio.h"
+#include "platform/rp2350/qspi_rom.h"
 #include "platform/rp2350/snes_bus.h"
 #include "platform/rp2350/snes_pio.h"
 #include "storage/snes_rom_installer.h"
@@ -33,7 +34,7 @@ void service_usb(void*) {
 
 SnesRomInstaller& installer() {
     static ParallelRomBus bus = parallel_rom_gpio_bus();
-    static SnesRomInstaller value(bus, {nullptr, usb_mode, busy_irq, service_usb});
+    static SnesRomInstaller value(bus, {nullptr, usb_mode, busy_irq, service_usb, qspi_rom_program});
     return value;
 }
 

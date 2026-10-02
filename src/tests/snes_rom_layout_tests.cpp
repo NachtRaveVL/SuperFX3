@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -105,6 +106,74 @@ static void test_rejects_non_rom() {
                  "non-ROM payload passed header validation");
 }
 
+static void test_fx3() {
+    std::vector<uint8_t> rom(0x400000u);
+    for (uint32_t i = 0; i < rom.size(); ++i)
+        rom[i] = static_cast<uint8_t>((i >> 12) ^ (i >> 19) ^ i);
+    add_header(rom, 0x7FC0u, 0x20);
+    rom[0x7FD7] = 0x0C;
+    SnesRomInfo info{};
+    for (uint32_t type : {0x17u, 0x18u}) {
+        rom[0x7FD6] = static_cast<uint8_t>(type);
+        test_require(snes_rom_detect({&rom, read_vector}, 0x400000u, false, info) &&
+                         info.map == SnesRomMap::Fx3 && info.size == 0x400000u && !info.data_offset,
+                     "canonical FX3 was misdetected as an ordinary ROM");
+    }
+    for (uint32_t address = 0; address < 0x1000000u; address += 0x1000u) {
+        uint32_t source = 0;
+        const uint32_t bank = address >> 16;
+        if (bank == 0x7Eu || bank == 0x7Fu) {
+            test_require(!snes_rom_source_offset(info, address, source), "FX3 mapped WRAM");
+            continue;
+        }
+        const uint32_t b = bank & 0x7Fu;
+        const uint32_t expected = b < 0x40u ?
+            b * 0x8000u + (address & 0x7FFFu) : (b - 0x40u) * 0x10000u + (address & 0xFFFFu);
+        test_require(snes_rom_source_offset(info, address, source) && source == expected,
+                     "FX3 physical bank mapping changed");
+    }
+    std::vector<uint8_t> dump(0x800000u + 256u, 0xFF);
+    for (uint32_t i = 0; i < 0x400000u; ++i) {
+        dump[i] = rom[(i >> 16) * 0x8000u + (i & 0x7FFFu)];
+        dump[0x400000u + i] = rom[i];
+    }
+    for (uint32_t size : {0x800000u, 0x800100u}) {
+        test_require(snes_rom_detect({&dump, read_vector}, size, false, info) &&
+                         info.map == SnesRomMap::Fx3 && info.data_offset == 0x400000u &&
+                         info.size == 0x400000u, "production FX3 dump/trailer was not stripped");
+    }
+    for (uint32_t offset : {0u, 0x8000u, 0x3FFFFFu, 0x800000u}) {
+        dump[offset] ^= 1;
+        test_require(!snes_rom_detect({&dump, read_vector}, 0x800100u, false, info),
+                     "malformed FX3 dump accepted");
+        dump[offset] ^= 1;
+    }
+    std::fill(dump.begin(), dump.end(), 0);
+    test_require(!snes_rom_detect({&dump, read_vector}, 0x800000u, false, info) ||
+                     (info.map != SnesRomMap::Fx3 && info.size == 0x800000u),
+                 "arbitrary 8 MiB image stripped as FX3");
+    snes_rom_descriptor({SnesRomMap::Fx3, 0x400000u, 0}, dump.data() + SNES_ROM_DESCRIPTOR_ADDRESS);
+    test_require(snes_rom_installed_map({&dump, read_vector}) == SnesRomMap::Fx3,
+                 "FX3 descriptor did not survive reboot");
+    dump[SNES_ROM_DESCRIPTOR_ADDRESS + 12u] ^= 1;
+    test_require(snes_rom_installed_map({&dump, read_vector}) == SnesRomMap::Fx3Physical,
+                 "corrupt descriptor selected canonical FX3");
+    for (uint32_t size : {0x100000u, 0x200000u, 0x300000u}) {
+        rom.resize(size);
+        rom[0x7FD7] = size == 0x100000u ? 0x0A : size == 0x200000u ? 0x0B : 0x0C;
+        test_require(snes_rom_detect({&rom, read_vector}, size, false, info) &&
+                         info.map == SnesRomMap::Fx3 && info.size == size,
+                     "smaller canonical FX3 not detected");
+        uint32_t source = 0;
+        test_require(snes_rom_source_offset(info, 0x600000u, source) &&
+                         source == (size <= 0x200000u ? 0u : 0x200000u),
+                     "FX3 third MiB did not mirror smaller ROM");
+        snes_rom_descriptor(info, dump.data() + SNES_ROM_DESCRIPTOR_ADDRESS);
+        test_require(snes_rom_installed_map({&dump, read_vector}) == SnesRomMap::Fx3,
+                     "smaller FX3 descriptor rejected");
+    }
+}
+
 int main() {
     for (uint32_t size : {32768u, 65536u}) {
         for (uint32_t header : {0u, 512u}) {
@@ -131,6 +200,7 @@ int main() {
     test_header_detection_ignores_extension();
     test_extended_maps();
     test_rejects_non_rom();
+    test_fx3();
     std::puts("snes_rom_layout_tests: PASS");
     return 0;
 }

@@ -103,6 +103,7 @@ def main() -> None:
         "hirom": (1 * MIB, 4 * MIB),
         "exlorom": (4 * MIB + 32 * 1024, 6 * MIB, 8 * MIB),
         "exhirom": (4 * MIB + 32 * 1024, 6 * MIB, 8 * MIB),
+        "fx3": (1 * MIB, 2 * MIB, 3 * MIB, 4 * MIB),
     }.items():
         for size in sizes:
             simulate_install(mapping, size)

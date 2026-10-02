@@ -43,15 +43,19 @@ FxKernel_AluAdd:
     gsu_nop
 
 FxKernel_RomBuffer:
+    gsu_iwt r0, $01          ; Kernels occupy canonical offset $008000 (GSU bank $01).
+    gsu_romb r0
     gsu_iwt r14, FxRomProbeByte
     gsu_getb r0
     gsu_sm TEST_RAM_ROM, r0
     gsu_stop
     gsu_nop
 
-; Cross-boundary pipeline test: private ROM buffering feeds an ALU operation,
+; Cross-boundary pipeline test: FX ROM buffering feeds an ALU operation,
 ; which feeds a delayed shared-RAM store immediately before STOP.
 FxKernel_PipelineMix:
+    gsu_iwt r0, $01
+    gsu_romb r0
     gsu_iwt r14, FxRomProbeByte
     gsu_getb r2
     gsu_iwt r3, $0011
@@ -187,7 +191,7 @@ FxKernel_Plot4bppScbr:
     gsu_stop
     gsu_nop
 
-; Exercise all three architectural landmarks in the 3 MiB private ROM window.
+; Exercise all three architectural landmarks in the 3 MiB FX-visible ROM window.
 FxKernel_RomFullRange:
     gsu_iwt r0, $005F
     gsu_romb r0

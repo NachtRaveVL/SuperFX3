@@ -55,6 +55,7 @@ add_executable(superfx3
     src/platform/rp2350/snes_pio.cpp
     src/platform/rp2350/parallel_rom_gpio.cpp
     src/platform/rp2350/qspi_save.cpp
+    src/platform/rp2350/qspi_rom.cpp
 
     src/usb/usb_descriptors.cpp
     src/usb/usb_rom_loader.cpp

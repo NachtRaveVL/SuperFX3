@@ -90,6 +90,20 @@ def main() -> None:
         run(str(firmware), str(rom), str(temp / "bad-offset.bin"),
             "--rom-offset", "0x101000", ok=False)
 
+        canonical = bytearray(b"\x55" * 0x300000 + b"\xAA" * 0x100000)
+        canonical[0x7FD6:0x7FD8] = b"\x17\x0C"
+        rom.write_bytes(canonical)
+        run(str(firmware), str(rom), str(image), "--fx3-rom")
+        if image.read_bytes()[0x100000:] != canonical[:0x300000]:
+            fail("canonical FX3 extraction changed the shared payload or included SNES-only bytes")
+        striped = b"".join(canonical[i:i + 0x8000] * 2 for i in range(0, 0x200000, 0x8000))
+        rom.write_bytes(striped + canonical + b"\xFF" * 256)
+        run(str(firmware), str(rom), str(image), "--fx3-rom")
+        if image.read_bytes()[0x100000:] != canonical[:0x300000]:
+            fail("production FX3 extraction differs from canonical input")
+        rom.write_bytes(b"\x00" * 0x800000)
+        run(str(firmware), str(rom), str(image), "--fx3-rom", ok=False)
+
     print("packer_tests: PASS")
 
 

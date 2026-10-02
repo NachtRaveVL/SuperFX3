@@ -50,6 +50,7 @@ PRODUCTION_SOURCES=(
     platform/rp2350/snes_pio.cpp
     platform/rp2350/parallel_rom_gpio.cpp
     platform/rp2350/qspi_save.cpp
+    platform/rp2350/qspi_rom.cpp
     usb/usb_descriptors.cpp
     usb/usb_rom_loader.cpp
     tests/sdk_stubs/flash_end.cpp
@@ -166,7 +167,9 @@ build_usb_block_order_tests() {
 
 build_snes_rom_installer_tests() {
     "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${CORE_INCLUDES[@]}" \
+        -DSDK_TEST_FLASH_EMULATION -DSDK_TEST_FX_ROM_PROGRAMMING \
         tests/snes_rom_installer_tests.cpp "${STORAGE_SOURCES[@]}" \
+        platform/rp2350/qspi_rom.cpp \
         -o "$BUILD/snes_rom_installer_tests"
 }
 

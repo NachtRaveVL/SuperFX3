@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 SYMBOL_RE = re.compile(r"\b([0-9A-Fa-f]{6,8})\s+\.?([A-Za-z_][A-Za-z0-9_]*)\s*$")
+FX_BANK = 0x01
 
 
 def parse_labels(text: str) -> dict[str, int]:
@@ -44,9 +45,9 @@ def main() -> int:
     for name in exports:
         address = symbols[name]
         if not 0 <= address < 0x8000:
-            raise SystemExit(f"{name} linked outside GSU bank 00: 0x{address:X}")
+            raise SystemExit(f"{name} linked outside its 32 KiB GSU bank: 0x{address:X}")
         lines.append(f"FX_ENTRY_{name} = ${address:04X}")
-        lines.append(f"FX_BANK_{name} = $00")
+        lines.append(f"FX_BANK_{name} = ${FX_BANK:02X}")
     lines.append("")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("\n".join(lines))

@@ -203,7 +203,7 @@ def main() -> int:
     require_source(r"const bool save\s*=.*?state_\.flags\.alt1\s*&&\s*state_\.flags\.alt2",
                    control_source, "test ROM ABI drift: ALT3+STOP no longer selects SAVE_AND_STOP")
     require_source(r"FxChip::FX3\s*,\s*FxTiming::Unlimited\s*,\s*0x6F", core_source,
-                   "test ROM ABI drift: FX3 private ROM maximum bank is no longer $6F")
+                   "test ROM ABI drift: FX3 ROM maximum bank is no longer $6F")
 
     for command, value in (("ChunkyToPlanarA", 0), ("ChunkyToPlanarB", 1), ("ChunkyToPlanarC", 2),
                            ("ClearA", 3), ("ClearB", 4), ("ClearC", 5)):

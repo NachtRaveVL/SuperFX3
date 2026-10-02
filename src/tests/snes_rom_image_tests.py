@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -147,6 +149,62 @@ def test_raw_128_mbit_rom() -> None:
     else:
         require(False, "conflicting 16 MiB raw bus image unexpectedly fit a 64-Mbit ROM")
 
+
+def test_fx3() -> None:
+    rom = bytearray(patterned_rom(4 * tool.MIB))
+    rom[0x7FD6:0x7FD8] = b"\x18\x0C"
+    rom = bytes(rom)
+    image = tool.build_chip_image(rom, tool.RomMap.FX3, tool.BUS_IMAGE_SIZE)
+    for bank in range(64):
+        block = rom[bank * 0x8000:(bank + 1) * 0x8000]
+        require(image[bank * 0x10000:(bank + 1) * 0x10000] == block * 2,
+                "FX3 lower banks did not mirror 32 KiB halves")
+    require(image[0x400000:0x600000] == rom[:0x200000], "FX3 linear first 2 MiB changed")
+    require(image[0x600000:0x700000] == rom[0x200000:0x300000], "FX3 third MiB changed")
+    require(image[0x700000:0x7E0000] == rom[0x300000:0x3E0000], "FX3 SNES-only region changed")
+    require(image[0xF00000:] == rom[0x300000:], "FX3 full SNES-only CPU mirror changed")
+    require(image[0x7E0000:0x7E0008] == b"S3MP\x05\x00\x00\x00", "FX3 descriptor missing")
+    require(tool.fx3_payload(rom) == rom[:0x300000], "FX3 QSPI extraction changed bytes or included final MiB")
+    with tempfile.TemporaryDirectory() as temp_dir:
+        path = Path(temp_dir)
+        (path / "game.sfc").write_bytes(rom)
+        subprocess.run([sys.executable, str(TOOL_PATH), str(path / "game.sfc"),
+                        str(path / "parallel.bin"), "--map", "fx3", "--fx-rom-output",
+                        str(path / "fxrom.bin")], check=True, stdout=subprocess.DEVNULL)
+        require((path / "parallel.bin").read_bytes() == image, "CLI FX3 parallel image differs")
+        require((path / "fxrom.bin").read_bytes() == rom[:0x300000], "CLI FX ROM output differs")
+    dump = image[:0x400000] + rom
+    for source in (rom, b"\x00" * 512 + rom, dump, dump + b"\xFF" * 256):
+        require(tool.normalize_fx3_rom(source) == rom, "FX3 normalization failed")
+        require(tool.fx3_payload(source) == rom[:0x300000], "FX3 dump payload differs")
+    for offset in (0, 0x8000, 0x3FFFFF):
+        bad = bytearray(dump)
+        bad[offset] ^= 1
+        try:
+            tool.normalize_fx3_rom(bytes(bad))
+        except ValueError:
+            pass
+        else:
+            require(False, "malformed FX3 mirror accepted")
+    for size in (tool.MIB, 2 * tool.MIB, 3 * tool.MIB):
+        small = bytearray(rom[:size])
+        small[0x7FD7] = (size - 1).bit_length() - 10
+        payload = tool.fx3_payload(bytes(small))
+        expected = (bytes(small) * 3)[:3 * tool.MIB]
+        require(payload == expected, "small FX3 ROM did not fill the FX window by mirroring")
+        bus = tool.build_bus_image(bytes(small), tool.RomMap.FX3)
+        require(bus[0x400000:0x700000] == payload, "FX3 CPU/GSU shared mapping differs")
+        require(bus[0x800000:0xC00000] == bus[:0x400000], "FX3 A23 upper striped mapping absent")
+        final = bytes(small[-tool.MIB:])
+        require(bus[0xF00000:] == final, "FX3 final CPU MiB mirrors incorrectly")
+    for bad in (b"\x00" * (8 * tool.MIB), dump + b"\x00" * 256, rom[:0x8000]):
+        try:
+            tool.normalize_fx3_rom(bad)
+        except ValueError:
+            pass
+        else:
+            require(False, "invalid FX3 size/header/trailer accepted")
+
 def main() -> None:
     test_offsets()
     test_bus_image()
@@ -155,6 +213,7 @@ def main() -> None:
     test_small_device_capacity()
     test_superfx_extended()
     test_raw_128_mbit_rom()
+    test_fx3()
     print("snes_rom_image_tests: PASS")
 
 

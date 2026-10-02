@@ -23,10 +23,10 @@ struct Rp2350FxBackendContext {
     void (*irq_write)(void* context, bool asserted);         ///< Callback used to assert or release the SNES IRQ line.
 };
 
-/// Configures the backend to read private FX code from its 3 MiB QSPI/XIP partition.
+/// Configures the backend to read FX-visible ROM from its 3 MiB QSPI/XIP partition.
 bool fx3_qspi_rom_init(Rp2350FxBackendContext& context);
 
-/// Reads one byte from a linear offset in the 3 MiB private FX code image.
+/// Reads one byte from a linear offset in the 3 MiB FX-visible ROM image.
 uint8_t fx3_qspi_rom_read(void* context, uint32_t offset);
 
 /// Builds the callback table used by the portable SuperFX core.

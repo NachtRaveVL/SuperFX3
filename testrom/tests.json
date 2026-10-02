@@ -117,7 +117,7 @@
   },
   {
     "id": "rom_full_range",
-    "name": "MEMORY / PRIVATE ROM 3M",
+    "name": "MEMORY / FX ROM 3M",
     "kernel": "FxKernel_RomFullRange",
     "setup": "RAM_MAGIC",
     "validator": "ROM_FULL",

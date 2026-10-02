@@ -13,12 +13,13 @@ namespace {
 constexpr char README_TEXT[] =
     "SuperFX3 USB ROM loader\r\n"
     "\r\n"
-    "Copy one LoROM/HiROM/ExLoROM/ExHiROM .sfc/.smc (maximum 8 MiB),\r\n"
+    "Copy one LoROM/HiROM/ExLoROM/ExHiROM/FX3 .sfc/.smc,\r\n"
     "or a ready-to-flash 16 MiB .rom/.bin physical bus image.\r\n"
     "After copying, safely EJECT the drive to install. Keep USB power on\r\n"
     "until programming finishes and /O_IRQ is released.\r\n"
     "Keep the cartridge out of a powered SNES while this drive is mounted.\r\n"
-    "/O_IRQ stays asserted while the parallel flash is being programmed.\r\n";
+    "FX3 updates parallel NOR and QSPI FX ROM; other maps update only NOR.\r\n"
+    "An interrupted installation requires re-uploading the ROM.\r\n";
 
 void put16(uint8_t* data, size_t offset, uint16_t value) {
     data[offset] = static_cast<uint8_t>(value);

@@ -72,9 +72,8 @@ int main() {
     const ParallelRomBus parallel = parallel_rom_gpio_bus();
     snes_pio_set_rom_map(snes_rom_installed_map({parallel.context, parallel.read}));
 
-    // FX3 uses the RP2350's primary QSPI flash for private FX code and data.
-    // This fixed partition is separate from the external parallel game ROM and
-    // is read directly through the RP2350 XIP window.
+    // FX3 reads the game's FX-visible ROM mapping from the primary QSPI flash
+    // through XIP. Parallel NOR holds the canonical game's SNES-visible mapping.
     if (!fx3_qspi_rom_init(g_fx_backend_context))
         panic("FX3 firmware overlaps the reserved QSPI save partition");
     qspi_save_init(g_ram);

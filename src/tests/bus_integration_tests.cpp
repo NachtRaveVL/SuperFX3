@@ -375,6 +375,23 @@ static void test_extended_page_reachability() {
     }
 }
 
+static void test_canonical_fx3_overlay() {
+    TestMemory memory{};
+    SuperFx fx;
+    init_bus(fx, memory, fx3_config);
+    snes_pio_set_rom_map(SnesRomMap::Fx3);
+    for (uint8_t bank : {uint8_t{0x70}, uint8_t{0x71}}) {
+        inject_write(bank, 0xA123, 0x5A);
+        test_require(inject_read(bank, 0xA123) == 0x5A &&
+                         inject_read_word(bank, 0xA123, true) != 0,
+                     "canonical FX3 ROM displaced SRAM overlay");
+    }
+    for (uint8_t bank : {uint8_t{0xC0}, uint8_t{0xE0}, uint8_t{0xF0}, uint8_t{0xFF}})
+        test_require(inject_read_word(bank, 0xA123, true) == 0,
+                     "canonical FX3 upper CPU ROM window is not accessible");
+    test_require(inject_read(0, 0x703B) == 0x52, "canonical FX3 register layout changed");
+}
+
 int main() {
     test_routed_packers();
     test_fx3_frontend_round_trip();
@@ -388,6 +405,7 @@ int main() {
     test_post_reset_write_cannot_overtake_reset();
     test_o_irq_output();
     test_extended_page_reachability();
+    test_canonical_fx3_overlay();
     std::puts("bus_integration_tests: PASS");
     return 0;
 }

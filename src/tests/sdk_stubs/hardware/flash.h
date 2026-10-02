@@ -9,7 +9,11 @@
 #include <cassert>
 inline void flash_range_erase(uint32_t offset, size_t size) {
     assert(sdk_flash::safe && offset % FLASH_SECTOR_SIZE == 0 && size % FLASH_SECTOR_SIZE == 0);
+#ifdef SDK_TEST_FX_ROM_PROGRAMMING
+    assert(offset >= 0x100000 && offset + size <= 0x400000);
+#else
     assert(offset >= 0x7C000 && offset + size <= 0x100000);
+#endif
     assert(sdk_flash::other_core_parked && sdk_flash::interrupts_disabled);
     sdk_flash::xip = false;
     if (sdk_flash::check_mutation) sdk_flash::check_mutation();
@@ -19,7 +23,11 @@ inline void flash_range_erase(uint32_t offset, size_t size) {
 }
 inline void flash_range_program(uint32_t offset, const uint8_t* bytes, size_t size) {
     assert(sdk_flash::safe && offset % FLASH_PAGE_SIZE == 0 && size % FLASH_PAGE_SIZE == 0);
+#ifdef SDK_TEST_FX_ROM_PROGRAMMING
+    assert(offset >= 0x100000 && offset + size <= 0x400000);
+#else
     assert(offset >= 0x7C000 && offset + size <= 0x100000);
+#endif
     assert(sdk_flash::other_core_parked && sdk_flash::interrupts_disabled);
     sdk_flash::xip = false;
     if (sdk_flash::check_mutation) sdk_flash::check_mutation();

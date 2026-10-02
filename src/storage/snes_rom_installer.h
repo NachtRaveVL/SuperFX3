@@ -31,6 +31,7 @@ struct SnesRomInstallHooks {
     bool (*usb_mode)(void* context);
     void (*busy_irq)(void* context, bool asserted);
     void (*service)(void* context);
+    bool (*program_fx)(void* context, uint32_t offset, const uint8_t* data, uint32_t size) = nullptr;
 };
 
 class SnesRomInstaller {
