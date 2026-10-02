@@ -1,4 +1,10 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/*
+ * NR-RetroWorks SuperFX3 Firmware
+ * Copyright (C) 2026 NR-RetroWorks
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License, version 3 or later.
+ */
+
 #pragma once
 
 #include <stddef.h>
@@ -25,6 +31,7 @@ struct SnesRomInstallHooks {
     bool (*usb_mode)(void* context);
     void (*busy_irq)(void* context, bool asserted);
     void (*service)(void* context);
+    bool (*program_fx)(void* context, uint32_t offset, const uint8_t* data, uint32_t size) = nullptr;
 };
 
 class SnesRomInstaller {

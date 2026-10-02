@@ -17,12 +17,20 @@ ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
 TOOLS = ROOT / "tools"
 _QSPI_PACKER = runpy.run_path(str(REPO / "src/tools/make_fx3_qspi_image.py"))
+_SNES_PACKER = runpy.run_path(str(REPO / "src/tools/make_snes_rom_image.py"))
+FX3_KERNEL_BANK = int(runpy.run_path(str(TOOLS / "gen_entries.py"))["FX_BANK"])
+FX3_KERNEL_OFFSET = FX3_KERNEL_BANK * 0x8000
 FX3_ROM_PARTITION_SIZE = int(_QSPI_PACKER["FX3_CODE_SIZE"])
 DEFAULT_QSPI_FLASH_SIZE = int(_QSPI_PACKER["QSPI_FLASH_SIZE"])
 FX3_SAVE_OFFSET = int(_QSPI_PACKER["FX3_SAVE_OFFSET"])
 FX3_SAVE_SIZE = int(_QSPI_PACKER["FX3_SAVE_SIZE"])
 DEFAULT_FX3_ROM_OFFSET = int(_QSPI_PACKER["FX3_CODE_OFFSET"])
 SYMBOL_RE = re.compile(r"\b([0-9A-Fa-f]{6,8})\s+\.?([A-Za-z_][A-Za-z0-9_]*)\s*$")
+FX3_PARTITION_PROBES = {
+    0x1FFFFF: 0x5F,
+    0x200000: 0x60,
+    0x2FFFFF: 0x6F,
+}
 
 
 def run(command: list[str], cwd: Path = ROOT) -> None:
@@ -60,12 +68,13 @@ def find_cc65_tool(name: str) -> str:
 
 def patch_snes_checksum(path: Path) -> None:
     data = bytearray(path.read_bytes())
-    if len(data) != 0x8000:
-        raise SystemExit(f"diagnostic SNES ROM must link to exactly 32 KiB, got {len(data)} bytes")
+    if len(data) != FX3_ROM_PARTITION_SIZE:
+        raise SystemExit(f"canonical diagnostic ROM must be exactly 3 MiB, got {len(data)} bytes")
     complement_offset = 0x7FDC
     checksum_offset = 0x7FDE
     data[complement_offset:checksum_offset + 2] = b"\x00\x00\x00\x00"
-    checksum = (sum(data) + 0x1FE) & 0xFFFF
+    # SNES checksums mirror the final MiB of a 3 MiB ROM into a 4 MiB window.
+    checksum = (sum(data) + sum(data[0x200000:]) + 0x1FE) & 0xFFFF
     complement = checksum ^ 0xFFFF
     data[complement_offset:complement_offset + 2] = complement.to_bytes(2, "little")
     data[checksum_offset:checksum_offset + 2] = checksum.to_bytes(2, "little")
@@ -74,8 +83,9 @@ def patch_snes_checksum(path: Path) -> None:
 
 def validate_snes_rom(path: Path) -> None:
     data = path.read_bytes()
-    if data[0x7FD5] != 0x20:
-        raise SystemExit("diagnostic ROM header is not LoROM")
+    _SNES_PACKER["normalize_fx3_rom"](data)
+    if len(data) != FX3_ROM_PARTITION_SIZE or data[0x7FD5:0x7FD8] != b"\x20\x17\x0C":
+        raise SystemExit("diagnostic ROM header is not canonical 3 MiB FX3")
     reset = int.from_bytes(data[0x7FFC:0x7FFE], "little")
     if not 0x8000 <= reset <= 0xFFBF:
         raise SystemExit(f"reset vector points outside linked code: 0x{reset:04X}")
@@ -83,6 +93,8 @@ def validate_snes_rom(path: Path) -> None:
     complement = int.from_bytes(data[0x7FDC:0x7FDE], "little")
     if (checksum ^ complement) != 0xFFFF:
         raise SystemExit("SNES checksum/complement pair is invalid")
+    if checksum != (sum(data) + sum(data[0x200000:])) & 0xFFFF:
+        raise SystemExit("SNES mirrored checksum is invalid")
 
 
 def generate_sources(build_dir: Path) -> None:
@@ -118,7 +130,7 @@ def build_fx(ca65: str, ld65: str, build_dir: Path) -> tuple[Path, Path]:
 
 def build_cpu(ca65: str, ld65: str, build_dir: Path) -> Path:
     obj = build_dir / "supervisor.o"
-    rom = build_dir / "fx3_test.sfc"
+    rom = build_dir / "supervisor.bin"
     labels = build_dir / "fx3_test.sym"
     map_file = build_dir / "fx3_test.map"
     run([
@@ -129,28 +141,38 @@ def build_cpu(ca65: str, ld65: str, build_dir: Path) -> Path:
         ld65, "-C", "linker/lorom.cfg", "-o", str(rom), "-Ln", str(labels),
         "-m", str(map_file), str(obj)
     ])
-    patch_snes_checksum(rom)
-    validate_snes_rom(rom)
     return rom
 
 
-def stage_fx_partition(fx_rom: Path, output: Path) -> Path:
+def build_canonical_rom(supervisor: Path, fx_rom: Path, output: Path) -> Path:
+    cpu = supervisor.read_bytes()
     payload = fx_rom.read_bytes()
-    if len(payload) > FX3_ROM_PARTITION_SIZE:
-        raise SystemExit(
-            f"FX test image is {len(payload)} bytes; the private partition is "
-            f"{FX3_ROM_PARTITION_SIZE} bytes"
-        )
+    if len(cpu) != 0x8000 or len(payload) != 0x8000:
+        raise SystemExit("supervisor and compact GSU image must each link to 32 KiB")
     image = bytearray(b"\xFF" * FX3_ROM_PARTITION_SIZE)
-    image[:len(payload)] = payload
+    image[:len(cpu)] = cpu
+    image[FX3_KERNEL_OFFSET:FX3_KERNEL_OFFSET + len(payload)] = payload
+    for offset, value in FX3_PARTITION_PROBES.items():
+        if not 0 <= offset < len(image):
+            raise SystemExit(f"FX3 diagnostic probe 0x{offset:X} is outside the canonical ROM")
+        if offset < FX3_KERNEL_OFFSET + len(payload):
+            raise SystemExit(f"FX3 diagnostic probe 0x{offset:X} overlaps the linked payload")
+        image[offset] = value
     output.write_bytes(image)
+    patch_snes_checksum(output)
+    validate_snes_rom(output)
+    return output
+
+
+def stage_fx_partition(rom: Path, output: Path) -> Path:
+    output.write_bytes(_SNES_PACKER["fx3_payload"](rom.read_bytes()))
     return output
 
 
 def pack_parallel(rom: Path, output: Path, chip_size_mbit: int) -> Path:
     command = [
         sys.executable, str(REPO / "src/tools/make_snes_rom_image.py"), str(rom), str(output),
-        "--map", "lorom", "--chip-size-mbit", str(chip_size_mbit),
+        "--map", "fx3", "--chip-size-mbit", str(chip_size_mbit),
     ]
     run(command, cwd=REPO)
     return output
@@ -225,17 +247,20 @@ def write_manifest(
             address = symbols.get(test["kernel"])
             if address is None:
                 raise SystemExit(f"manifest is missing linked symbol {test['kernel']}")
-            entry["fx_bank"] = 0
+            if not 0 <= address < 0x8000:
+                raise SystemExit(f"kernel {test['kernel']} is outside its canonical ROM bank")
+            entry["fx_bank"] = FX3_KERNEL_BANK
+            entry["canonical_offset"] = FX3_KERNEL_OFFSET + address
             entry["fx_address"] = address
             entry["fx_address_hex"] = f"0x{address:04X}"
         manifest_tests.append(entry)
 
     artifacts = {
-        "snes_supervisor": artifact_record(snes_rom, "parallel SNES CPU LoROM source image"),
-        "fxrom_compact": artifact_record(fx_rom, "linked private GSU test payload"),
+        "canonical_rom": artifact_record(snes_rom, "authoritative canonical FX3 diagnostic ROM"),
+        "fxrom_compact": artifact_record(fx_rom, "compact linked GSU kernels for development/debugging"),
         "fxrom_partition": artifact_record(
             fx_partition,
-            "3 MiB programming-ready private FX code partition in QSPI",
+            "3 MiB FX-visible ROM derived from the canonical .sfc",
             flash_offset=DEFAULT_FX3_ROM_OFFSET,
         ),
     }
@@ -244,7 +269,6 @@ def write_manifest(
 
     pair_digest = hashlib.sha256()
     pair_digest.update(snes_rom.read_bytes())
-    pair_digest.update(fx_partition.read_bytes())
 
     manifest = {
         "format": 1,
@@ -259,6 +283,10 @@ def write_manifest(
             "fxrom_default_offset": DEFAULT_FX3_ROM_OFFSET,
             "fxrom_default_offset_hex": f"0x{DEFAULT_FX3_ROM_OFFSET:06X}",
             "erased_fill": "0xFF",
+            "diagnostic_probes": {
+                f"0x{offset:06X}": f"0x{value:02X}"
+                for offset, value in FX3_PARTITION_PROBES.items()
+            },
         },
         "artifacts": artifacts,
         "tests": manifest_tests,
@@ -271,24 +299,31 @@ def self_test_build_helpers() -> None:
     with tempfile.TemporaryDirectory(prefix="fx3-testrom-") as temp_name:
         temp = Path(temp_name)
 
-        snes = temp / "fx3_test.sfc"
+        supervisor = temp / "supervisor.bin"
         snes_data = bytearray(b"\xFF" * 0x8000)
-        snes_data[0x7FD5] = 0x20
+        snes_data[0x7FD5:0x7FD8] = b"\x20\x17\x0C"
         snes_data[0x7FFC:0x7FFE] = (0x8000).to_bytes(2, "little")
-        snes.write_bytes(snes_data)
-        patch_snes_checksum(snes)
-        validate_snes_rom(snes)
+        supervisor.write_bytes(snes_data)
 
         fx_rom = temp / "fx3_test_fxrom.bin"
         fx_rom.write_bytes(bytes((index & 0xFF) for index in range(0x8000)))
-        partition = stage_fx_partition(fx_rom, temp / "fx3_test_fxrom_partition.bin")
+        snes = build_canonical_rom(supervisor, fx_rom, temp / "fx3_test.sfc")
+        partition = stage_fx_partition(snes, temp / "fx3_test_fxrom_partition.bin")
         partition_data = partition.read_bytes()
         if len(partition_data) != FX3_ROM_PARTITION_SIZE:
             raise SystemExit("FX3 partition staging did not produce exactly 3 MiB")
-        if partition_data[:0x8000] != fx_rom.read_bytes():
+        if partition_data[FX3_KERNEL_OFFSET:FX3_KERNEL_OFFSET + 0x8000] != fx_rom.read_bytes():
             raise SystemExit("FX3 partition staging changed the linked payload")
-        if partition_data[0x8000:] != b"\xFF" * (FX3_ROM_PARTITION_SIZE - 0x8000):
-            raise SystemExit("FX3 partition staging did not erase-fill unused space")
+        expected_partition = snes.read_bytes()
+        for offset, value in FX3_PARTITION_PROBES.items():
+            if expected_partition[offset] != value:
+                raise SystemExit("canonical ROM lost a far-ROM probe")
+        if partition_data != expected_partition:
+            raise SystemExit("FX3 partition staging changed bytes outside the payload/probes")
+        parallel = pack_parallel(snes, temp / "fx3_test_parallel_rom.bin", 128)
+        if parallel.read_bytes() != _SNES_PACKER["build_bus_image"](
+                snes.read_bytes(), _SNES_PACKER["RomMap"].FX3):
+            raise SystemExit("diagnostic parallel image differs from normal FX3 packing")
 
         labels = temp / "fx3_test_fxrom.sym"
         kernels = [test["kernel"] for test in tests if test["kernel"]]
@@ -309,13 +344,26 @@ def self_test_build_helpers() -> None:
             raise SystemExit("manifest QSPI offset drifted from the firmware layout")
         if len(manifest["tests"]) != len(tests):
             raise SystemExit("manifest lost diagnostic tests")
+        for test in manifest["tests"]:
+            if test["kernel"] and (test["fx_bank"] != FX3_KERNEL_BANK or
+                    test["canonical_offset"] != FX3_KERNEL_OFFSET + test["fx_address"]):
+                raise SystemExit("GSU entry symbols do not address the canonical ROM")
+
+        firmware = temp / "superfx3.bin"
+        firmware.write_bytes(b"FX3")
+        combined = temp / "superfx3_test_qspi.bin"
+        pack_qspi(firmware, partition, combined)
+        combined_data = combined.read_bytes()
+        if len(combined_data) != DEFAULT_QSPI_FLASH_SIZE or \
+                combined_data[DEFAULT_FX3_ROM_OFFSET:] != partition_data:
+            raise SystemExit("combined QSPI image did not preserve the full staged FX partition")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build the native SuperFX3 diagnostic ROM pair.")
+    parser = argparse.ArgumentParser(description="Build the canonical SuperFX3 diagnostic ROM.")
     parser.add_argument("--build-dir", type=Path, default=REPO / "build/testrom")
     parser.add_argument("--check", action="store_true", help="validate sources and generate assets without requiring cc65")
-    parser.add_argument("--pack-parallel", action="store_true", help="also create the physical parallel-ROM programming image")
+    parser.add_argument("--pack-parallel", action="store_true", help="compatibility option; the parallel image is always generated")
     parser.add_argument("--chip-size-mbit", type=int, default=128)
     parser.add_argument("--firmware-bin", type=Path, help="also combine the FX test image with an RP2350 firmware .bin")
     return parser.parse_args()
@@ -344,26 +392,26 @@ def main() -> int:
     ca65 = find_cc65_tool("ca65")
     ld65 = find_cc65_tool("ld65")
     fx_rom, fx_labels = build_fx(ca65, ld65, build_dir)
-    snes_rom = build_cpu(ca65, ld65, build_dir)
-    fx_partition = stage_fx_partition(fx_rom, build_dir / "fx3_test_fxrom_partition.bin")
+    supervisor = build_cpu(ca65, ld65, build_dir)
+    snes_rom = build_canonical_rom(supervisor, fx_rom, build_dir / "fx3_test.sfc")
+    fx_partition = stage_fx_partition(snes_rom, build_dir / "fx3_test_fxrom_partition.bin")
 
     extras: list[tuple[Path, str, int | None]] = []
-    if args.pack_parallel:
-        parallel = pack_parallel(snes_rom, build_dir / "fx3_test_parallel_rom.bin", args.chip_size_mbit)
-        extras.append((parallel, "single parallel-ROM programming image", None))
+    parallel = pack_parallel(snes_rom, build_dir / "fx3_test_parallel_rom.bin", args.chip_size_mbit)
+    extras.append((parallel, "parallel-ROM image derived from the canonical .sfc", None))
 
     if args.firmware_bin:
         firmware = args.firmware_bin.resolve()
         if not firmware.is_file():
             raise SystemExit(f"firmware binary does not exist: {firmware}")
         combined = build_dir / "superfx3_test_qspi.bin"
-        pack_qspi(firmware, fx_rom, combined)
+        pack_qspi(firmware, fx_partition, combined)
         extras.append((combined, "complete RP2350 QSPI image with firmware and FX3 test ROM", 0))
 
     manifest = build_dir / "fx3_test_manifest.json"
     write_manifest(manifest, snes_rom, fx_rom, fx_partition, fx_labels, extras)
 
-    print(f"SNES supervisor      : {snes_rom}")
+    print(f"Canonical FX3 ROM    : {snes_rom}")
     print(f"FX3 linked payload   : {fx_rom}")
     print(f"FX3 QSPI partition   : {fx_partition}")
     print(f"Matched-set manifest : {manifest}")

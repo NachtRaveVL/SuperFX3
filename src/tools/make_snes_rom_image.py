@@ -19,6 +19,7 @@ class RomMap(Enum):
     HIROM = "hirom"
     EXLOROM = "exlorom"
     EXHIROM = "exhirom"
+    FX3 = "fx3"
     SUPERFX_EXTENDED = "superfx-extended"
     RAW = "raw"
 
@@ -51,7 +52,7 @@ def standard_rom_window(address: int) -> bool:
 
 
 def source_limit(mapping: RomMap) -> int:
-    if mapping in (RomMap.LOROM, RomMap.HIROM):
+    if mapping in (RomMap.LOROM, RomMap.HIROM, RomMap.FX3):
         return 4 * MIB
     if mapping in (RomMap.EXLOROM, RomMap.EXHIROM):
         return 8 * MIB
@@ -71,6 +72,33 @@ def validate_source(rom: bytes, mapping: RomMap) -> None:
         raise ValueError("SNES ROM size must be a multiple of 32 KiB")
     if mapping == RomMap.SUPERFX_EXTENDED and len(rom) != 11 * MIB:
         raise ValueError("superfx-extended currently models the 11 MiB Snes9x SuperFX layout")
+
+
+def normalize_fx3_rom(rom: bytes) -> bytes:
+    if len(rom) % 0x8000 == 512:
+        rom = rom[512:]
+    if len(rom) == 8 * MIB + 256 and rom[-256:] == b"\xFF" * 256:
+        rom = rom[:-256]
+    if len(rom) == 8 * MIB:
+        canonical = rom[4 * MIB:]
+        for offset in range(0, 2 * MIB, 0x8000):
+            block = canonical[offset:offset + 0x8000]
+            if rom[offset * 2:offset * 2 + 0x10000] != block * 2:
+                raise ValueError("invalid FX3 physical mirror region")
+        rom = canonical
+    validate_source(rom, RomMap.FX3)
+    if rom[0x7FD6] not in (0x17, 0x18) or rom[0x7FD7] != (len(rom) - 1).bit_length() - 10:
+        raise ValueError("FX3 requires ROM type $17/$18 and a matching header size")
+    return rom
+
+
+def fx3_payload(rom: bytes) -> bytes:
+    rom = normalize_fx3_rom(rom)
+    image = bytearray()
+    for offset in range(0, 3 * MIB, PAGE_SIZE):
+        source = mirror_offset(len(rom), offset)
+        image.extend(rom[source:source + PAGE_SIZE])
+    return bytes(image)
 
 
 # Matches the standard LoROM, HiROM, ExLoROM, and ExHiROM layouts used by SNES emulators.
@@ -113,6 +141,14 @@ def rom_offset(mapping: RomMap, address: int, rom_size: int) -> int | None:
     if mapping == RomMap.RAW:
         return address if address < rom_size else None
 
+    if mapping == RomMap.FX3:
+        if address >> 16 in (0x7E, 0x7F):
+            return None
+        bank = (address >> 16) & 0x7F
+        offset = ((bank << 15) | (address & 0x7FFF)) if bank < 0x40 else \
+            ((bank - 0x40) << 16) | (address & 0xFFFF)
+        return mirror_offset(rom_size, offset)
+
     if mapping == RomMap.SUPERFX_EXTENDED:
         offset = superfx_extended_offset(address)
         return offset if offset is not None and offset < rom_size else None
@@ -137,6 +173,8 @@ def source_page(rom: bytes, mapping: RomMap, address: int) -> bytes | None:
 
 
 def build_bus_image(rom: bytes, mapping: RomMap) -> bytearray:
+    if mapping == RomMap.FX3:
+        rom = normalize_fx3_rom(rom)
     validate_source(rom, mapping)
     image = bytearray(b"\xFF") * BUS_IMAGE_SIZE
 
@@ -150,7 +188,8 @@ def build_bus_image(rom: bytes, mapping: RomMap) -> bytearray:
 
 
 def add_descriptor(image: bytearray, mapping: RomMap, source_size: int) -> None:
-    maps = (RomMap.LOROM, RomMap.HIROM, RomMap.EXLOROM, RomMap.EXHIROM)
+    # Value 4 belongs to the descriptor-less Fx3Physical fallback in firmware.
+    maps = (RomMap.LOROM, RomMap.HIROM, RomMap.EXLOROM, RomMap.EXHIROM, None, RomMap.FX3)
     if len(image) != BUS_IMAGE_SIZE or mapping not in maps:
         return
     mode = maps.index(mapping)
@@ -168,6 +207,8 @@ def chip_size_bytes(size_mbit: int) -> int:
 
 
 def build_chip_image(rom: bytes, mapping: RomMap, chip_size: int) -> bytearray:
+    if mapping == RomMap.FX3:
+        rom = normalize_fx3_rom(rom)
     validate_source(rom, mapping)
 
     if chip_size < 128 * KIB or chip_size > BUS_IMAGE_SIZE or chip_size & (chip_size - 1):
@@ -220,6 +261,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("rom", type=Path, help="input .sfc/.smc ROM or raw bus image")
     parser.add_argument("output", type=Path, help="single parallel-ROM programming image")
+    parser.add_argument("--fx-rom-output", type=Path, help="write the 3 MiB FX-visible ROM (requires --map fx3)")
     parser.add_argument(
         "--map",
         dest="mapping",
@@ -241,6 +283,10 @@ def main() -> None:
     args = parse_args()
     mapping = RomMap(args.mapping)
     rom = args.rom.read_bytes() if mapping == RomMap.RAW else load_rom(args.rom)
+    if args.fx_rom_output and mapping != RomMap.FX3:
+        raise SystemExit("--fx-rom-output requires --map fx3")
+    if mapping == RomMap.FX3:
+        rom = normalize_fx3_rom(rom)
     chip_size = chip_size_bytes(args.chip_size_mbit)
 
     try:
@@ -252,6 +298,8 @@ def main() -> None:
         raise SystemExit(str(exc)) from exc
 
     args.output.write_bytes(image)
+    if args.fx_rom_output:
+        args.fx_rom_output.write_bytes(fx3_payload(rom))
 
     minimum = minimum_chip_size_mbit(rom, mapping)
     print(f"Map: {mapping.value}")

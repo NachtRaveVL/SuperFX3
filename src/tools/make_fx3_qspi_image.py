@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the fixed W25Q32 image containing firmware, saves, and FX code."""
+"""Build the fixed W25Q32 image containing firmware, saves, and FX-visible ROM."""
 
 from __future__ import annotations
 
@@ -30,14 +30,15 @@ def parse_size(value: str) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Pack RP2350 firmware, an erased save journal, and private FX code "
-            "into the fixed three-part W25Q32 QSPI image. SNES game ROM data "
-            "does not belong in this image."
+            "Pack RP2350 firmware, an erased save journal, and FX-visible ROM "
+            "into the fixed three-part W25Q32 QSPI image."
         )
     )
     parser.add_argument("firmware", type=Path, help="RP2350 firmware .bin")
-    parser.add_argument("fx_code", type=Path, help="linear private FX code image, up to 3 MiB")
+    parser.add_argument("fx_code", type=Path, help="prepared linear FX-visible ROM image, up to 3 MiB")
     parser.add_argument("output", type=Path, help="combined raw flash image")
+    parser.add_argument("--fx3-rom", action="store_true",
+                        help="derive FX-visible ROM from a canonical or production-dump FX3 ROM")
     parser.add_argument(
         "--flash-size",
         type=parse_size,
@@ -54,6 +55,13 @@ def main() -> int:
 
     firmware = args.firmware.read_bytes()
     fx_code = args.fx_code.read_bytes()
+    if args.fx3_rom:
+        from make_snes_rom_image import fx3_payload
+
+        try:
+            fx_code = fx3_payload(fx_code)
+        except ValueError as exc:
+            parser.error(str(exc))
 
     if args.flash_size != QSPI_FLASH_SIZE:
         parser.error("the production SuperFX3 QSPI layout requires exactly 4 MiB")

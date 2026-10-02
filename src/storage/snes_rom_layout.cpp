@@ -1,7 +1,8 @@
 /*
  * NR-RetroWorks SuperFX3 Firmware
  * Copyright (C) 2026 NR-RetroWorks
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License, version 3 or later.
  */
 
 #include "snes_rom_layout.h"
@@ -70,9 +71,45 @@ bool snes_rom_detect(const SnesRomReader& reader, uint32_t file_size,
 
     const bool copier_header = (file_size % (32u * KIB)) == 512u;
     const uint32_t data_offset = copier_header ? 512u : 0u;
-    const uint32_t data_size = file_size - data_offset;
+    uint32_t data_size = file_size - data_offset;
+    if (data_size == 8u * MIB + 256u) {
+        for (uint32_t i = 8u * MIB; i < data_size; ++i) {
+            if (reader.read(reader.context, data_offset + i) != 0xFF)
+                return false;
+        }
+        data_size -= 256u;
+    }
     if (data_size == 0 || data_size > 8u * MIB || (data_size % (32u * KIB)) != 0)
         return false;
+
+    const uint32_t canonical = data_offset + (data_size == 8u * MIB ? 4u * MIB : 0u);
+    const auto fx3_header = [&reader](uint32_t base) {
+        const uint8_t type = reader.read(reader.context, base + 0x7FD6u);
+        return (type == 0x17u || type == 0x18u) &&
+            header_score(reader, base + 0x7FC0u, SnesRomMap::LoRom) >= 8;
+    };
+    if (fx3_header(canonical) || fx3_header(data_offset)) {
+        const uint32_t size = data_size == 8u * MIB ? 4u * MIB : data_size;
+        uint8_t size_field = 0;
+        for (uint32_t capacity = KIB; capacity < size; capacity <<= 1)
+            ++size_field;
+        if (size > 4u * MIB || !fx3_header(canonical) ||
+            reader.read(reader.context, canonical + 0x7FD7u) != size_field)
+            return false;
+        if (data_size == 8u * MIB) {
+            for (uint32_t i = 0; i < 2u * MIB; ++i) {
+                const uint32_t physical = ((i & ~0x7FFFu) << 1) | (i & 0x7FFFu);
+                const uint8_t value = reader.read(reader.context, canonical + i);
+                if (reader.read(reader.context, data_offset + physical) != value ||
+                    reader.read(reader.context, data_offset + physical + 0x8000u) != value)
+                    return false;
+            }
+        }
+        info = {SnesRomMap::Fx3, size, canonical};
+        return true;
+    }
+    if (file_size - data_offset != data_size)
+        return false; // The erased trailer is specific to the validated FX3 dump.
 
     if (data_size > 4u * MIB) {
         const int exlo_low = header_score(reader, data_offset + 0x7FC0u,
@@ -107,6 +144,14 @@ bool snes_rom_source_offset(const SnesRomInfo& info, uint32_t bus_address,
     const uint16_t address = static_cast<uint16_t>(bus_address);
     if (bank == 0x7Eu || bank == 0x7Fu)
         return false;
+    if (info.map == SnesRomMap::Fx3) {
+        const uint32_t mirrored_bank = bank & 0x7Fu;
+        source_offset = mirrored_bank < 0x40u ?
+            (mirrored_bank << 15) | (address & 0x7FFFu) :
+            ((mirrored_bank - 0x40u) << 16) | address;
+        source_offset = mirror_offset(info.size, source_offset);
+        return true;
+    }
     if ((bank <= 0x3Fu || (bank >= 0x80u && bank <= 0xBFu)) && address < 0x8000u)
         return false;
 
@@ -145,8 +190,11 @@ SnesRomMap snes_rom_installed_map(const SnesRomReader& physical) {
             words[i] |= static_cast<uint32_t>(physical.read(physical.context,
                 SNES_ROM_DESCRIPTOR_ADDRESS + i * 4u + byte)) << (byte * 8u);
     }
-    if (words[0] != 0x504D3353u || words[1] > static_cast<uint32_t>(SnesRomMap::ExHiRom) ||
+    if (words[0] != 0x504D3353u ||
+        (words[1] > static_cast<uint32_t>(SnesRomMap::ExHiRom) &&
+         words[1] != static_cast<uint32_t>(SnesRomMap::Fx3)) ||
         !words[2] || words[2] > 8u * MIB || (words[2] % (32u * KIB)) != 0 ||
+        (words[1] == static_cast<uint32_t>(SnesRomMap::Fx3) && words[2] > 4u * MIB) ||
         words[3] != ~(words[0] ^ words[1] ^ words[2]))
         return SnesRomMap::Fx3Physical;
     return static_cast<SnesRomMap>(words[1]);

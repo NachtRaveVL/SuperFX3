@@ -26,7 +26,7 @@ bool fx3_qspi_rom_init(Rp2350FxBackendContext& context) {
     const uintptr_t save_start = static_cast<uintptr_t>(XIP_BASE) + fx3_qspi::SAVE_OFFSET;
     const uintptr_t firmware_end = reinterpret_cast<uintptr_t>(&__flash_binary_end);
 
-    // Firmware, the save journal, and private FX code share the primary QSPI device.
+    // Firmware, the save journal, and FX-visible ROM share the primary QSPI device.
     // The external SNES game/program ROM is not mapped into this device.
     // Refuse to boot if the linked firmware has grown into persistent save data.
     if (firmware_end > save_start)

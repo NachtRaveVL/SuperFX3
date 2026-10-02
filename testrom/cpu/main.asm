@@ -85,9 +85,9 @@ DiagnosticPaletteEnd:
 
 .segment "HEADER"
     .byte "NR FX3 DIAGNOSTIC    "
-    .byte $20               ; LoROM, slow ROM
-    .byte $00               ; ROM only in the standard SNES header
-    .byte $05               ; 32 KiB source ROM
+    .byte $20               ; FX3 uses the LoROM header location.
+    .byte $17               ; FX3 without battery
+    .byte $0C               ; 3 MiB canonical ROM, rounded up to 4 MiB in the size field
     .byte $00               ; Standard header RAM size is unused
     .byte $01               ; North America
     .byte $00               ; Developer ID

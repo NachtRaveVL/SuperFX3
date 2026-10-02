@@ -1,8 +1,10 @@
 /*
  * NR-RetroWorks SuperFX3 Firmware
  * Copyright (C) 2026 NR-RetroWorks
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License, version 3 or later.
  */
+
 #pragma once
 
 #include <stddef.h>

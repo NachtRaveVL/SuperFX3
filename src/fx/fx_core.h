@@ -4,6 +4,7 @@
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License, version 3 or later.
  */
+
 #pragma once
 
 #include <stdbool.h>
@@ -183,7 +184,7 @@ private:
 
     // Opcodes $00-$3F
 
-    /// Implements STOP, including FX3 completion behavior and the normal GSU IRQ side effect.
+    /// Implements STOP, including FX3 completion, IRQ, and ALT3 save behavior.
     void op_stop();
     /// Implements NOP and clears any pending instruction prefix state.
     void op_nop();
@@ -226,7 +227,7 @@ private:
     void op_add(uint8_t reg);
     /// Implements SUB/SBC/CMP and immediate subtraction forms.
     void op_sub_compare(uint8_t reg);
-    /// Implements normal MERGE, FX3 commands, and the FX3 ALT1 legacy-MERGE form.
+    /// Implements FX3 MERGE commands and legacy ALT1+MERGE for GSU1/2 compatibility.
     void op_merge();
     /// Implements AND/BIC using a register or immediate nibble operand.
     void op_and_bic(uint8_t reg);
@@ -298,3 +299,38 @@ private:
     /// Fills a range of FX3 tile columns with the hardware-compatible clear pattern.
     void fx3_clear(uint8_t first_block, uint8_t last_block);
 };
+
+// Keep these small opcode helpers visible to the compiler without requiring LTO.
+inline uint16_t SuperFx::read_src() const {
+    return state_.r[state_.src_reg];
+}
+
+// Mesen-derived: closely follows MesenCE Gsu::WriteDestReg().
+inline void SuperFx::write_dst(uint16_t value) {
+    write_reg(state_.dst_reg, value);
+}
+
+// Mesen-derived: closely follows MesenCE Gsu::WriteRegister(), including R14/R15 side effects.
+inline void SuperFx::write_reg(uint8_t reg, uint16_t value) {
+    reg &= 0x0F;
+    state_.r[reg] = value;
+
+    if (reg == 14) {
+        // Writing R14 initiates a buffered ROM read.
+        state_.flags.rom_read_pending = true;
+        state_.rom_delay = state_.clock_select ? 5 : 6;
+    } else if (reg == 15) {
+        // Suppress normal end-of-instruction PC increment.
+        r15_changed_ = true;
+    }
+}
+
+// Mesen-derived: closely follows MesenCE Gsu::ResetFlags().
+inline void SuperFx::reset_prefix() {
+    state_.flags.prefix = false;
+    state_.flags.alt1 = false;
+    state_.flags.alt2 = false;
+
+    state_.src_reg = 0;
+    state_.dst_reg = 0;
+}

@@ -1,7 +1,8 @@
 /*
  * NR-RetroWorks SuperFX3 Firmware
  * Copyright (C) 2026 NR-RetroWorks
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License, version 3 or later.
  */
 
 #include "snes_rom_installer.h"
@@ -162,9 +163,14 @@ uint8_t SnesRomInstaller::read(uint32_t file_offset) const {
         return file_offset < ParallelRomProgrammer::CAPACITY ?
             bus_.read(bus_.context, file_offset) : 0xFF;
 
-    if (file_offset < installed_info_.data_offset)
+    const bool fx3_dump = installed_info_.map == SnesRomMap::Fx3 &&
+                          installed_info_.data_offset >= 4u * MIB;
+    const uint32_t header_size = installed_info_.data_offset - (fx3_dump ? 4u * MIB : 0u);
+    if (file_offset < header_size)
         return copier_header_[file_offset];
-    const uint32_t source = file_offset - installed_info_.data_offset;
+    const uint32_t source = fx3_dump && file_offset < installed_info_.data_offset ?
+        (((file_offset - header_size) >> 16) << 15) | ((file_offset - header_size) & 0x7FFFu) :
+        file_offset - installed_info_.data_offset;
     if (source >= installed_info_.size)
         return 0xFF;
     const uint32_t page = source / PAGE_SIZE;
@@ -350,6 +356,8 @@ void SnesRomInstaller::build_representatives(const SnesRomInfo& info) {
 }
 
 bool SnesRomInstaller::install(const SnesRomInfo& info) {
+    if (info.map == SnesRomMap::Fx3 && !hooks_.program_fx)
+        return false;
     if (info.data_offset) {
         for (uint32_t index = 0; index < sizeof(copier_header_); ++index)
             copier_header_[index] = bus_.read(bus_.context, index);
@@ -365,6 +373,23 @@ bool SnesRomInstaller::install(const SnesRomInfo& info) {
     const uint32_t lower_size = info.size < 4u * MIB ? info.size : 4u * MIB;
     if (!copy_to_temp(info.data_offset, lower_size, UPPER_TEMP_BASE, false))
         return false;
+
+    if (info.map == SnesRomMap::Fx3) {
+        // Materialize the GSU's 3 MiB window, mirroring smaller canonical ROMs.
+        for (uint32_t offset = 0; offset < 3u * MIB; offset += PAGE_SIZE) {
+            if (!active())
+                return false;
+            uint32_t source = 0;
+            if (!snes_rom_source_offset(info, 0x400000u + offset, source))
+                return false;
+            for (uint32_t i = 0; i < PAGE_SIZE; ++i)
+                sector_buffer_[i] = bus_.read(bus_.context, UPPER_TEMP_BASE + source + i);
+            if (!hooks_.program_fx(hooks_.context, offset, sector_buffer_, PAGE_SIZE))
+                return false;
+            if (hooks_.service)
+                hooks_.service(hooks_.context);
+        }
+    }
 
     // Ascending order is intentional. For extended maps, the lower 8 MiB is
     // completed before either temporary half is overwritten. Within the upper

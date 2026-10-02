@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "storage/parallel_rom_programmer.h"
+#include <stdint.h>
 
-/// Returns the byte-wide IS29GL128 bus implementation used only in USB mode.
-ParallelRomBus parallel_rom_gpio_bus();
+/// Programs one SRAM-backed sector of the FX partition during USB installation.
+bool qspi_rom_program(void* context, uint32_t offset, const uint8_t* data, uint32_t size);

@@ -4,6 +4,7 @@
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License, version 3 or later.
  */
+
 #include "fx_core.h"
 
 // $00: STOP
@@ -25,7 +26,6 @@ void SuperFx::op_stop() {
     }
 
     // No guest execution or QSPI-backed guest fetches may run during the save.
-    // Prefix cleanup belongs to the instruction dispatcher after this returns.
     state_.program_read_buffer = 0x01;
     state_.flags.running = false;
     update_running_state();
@@ -35,6 +35,7 @@ void SuperFx::op_stop() {
         // at PC wraparound, halt, and require software to explicitly restart.
         state_.save_failed = true;
         write_reg(15, state_.r[15] ? state_.r[15] : 0xFFFF);
+        reset_prefix();
         return;
     }
 
@@ -47,6 +48,8 @@ void SuperFx::op_stop() {
         state_.flags.irq = true;
         if (backend_.set_irq) backend_.set_irq(backend_.context, true);
     }
+
+    reset_prefix();
 }
 
 // $01: NOP

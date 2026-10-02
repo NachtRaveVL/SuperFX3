@@ -7,6 +7,7 @@ text_cursor:        .res 2
 text_ptr:           .res 2
 text_palette:       .res 2
 menu_index:         .res 2
+menu_top:           .res 2
 ui_index:           .res 2
 ui_line:            .res 2
 current_test:       .res 2
@@ -29,3 +30,4 @@ clear_row:          .res 2
 clear_tile_addr:    .res 2
 visual_source:      .res 2
 temp_word:          .res 2
+irq_seen:           .res 2

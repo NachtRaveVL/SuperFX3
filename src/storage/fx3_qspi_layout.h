@@ -11,8 +11,8 @@
 
 namespace fx3_qspi {
 
-// Fixed W25Q32 production layout. This QSPI device never contains the SNES
-// game/program ROM; that image belongs exclusively to the external parallel NOR.
+// Fixed W25Q32 production layout. The upper 3 MiB hold the game's FX-visible
+// ROM mapping; parallel NOR holds the same canonical ROM's SNES mapping.
 constexpr uint32_t FLASH_SIZE = 4u * 1024u * 1024u;
 constexpr uint32_t FIRMWARE_OFFSET = 0u;
 constexpr uint32_t FIRMWARE_SIZE = 496u * 1024u;

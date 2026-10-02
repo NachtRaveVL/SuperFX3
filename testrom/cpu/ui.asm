@@ -11,11 +11,11 @@ MenuPrevious:
     lda menu_index
     beq @wrap
     dec menu_index
-    rts
+    jmp EnsureMenuVisible
 @wrap:
     lda #TEST_COUNT - 1
     sta menu_index
-    rts
+    jmp EnsureMenuVisible
 
 MenuNext:
     inc menu_index
@@ -23,6 +23,24 @@ MenuNext:
     cmp #TEST_COUNT
     bcc @done
     stz menu_index
+@done:
+    jmp EnsureMenuVisible
+
+EnsureMenuVisible:
+    lda menu_index
+    cmp menu_top
+    bcs @check_bottom
+    sta menu_top
+    rts
+@check_bottom:
+    sec
+    sbc menu_top
+    cmp #17
+    bcc @done
+    lda menu_index
+    sec
+    sbc #16
+    sta menu_top
 @done:
     rts
 
@@ -33,7 +51,8 @@ RenderMenu:
     TEXT_AT 1, 3, StrMenuHelpA
     TEXT_AT 16, 3, StrMenuHelpStart
 
-    stz ui_index
+    lda menu_top
+    sta ui_index
     lda #((5 * 32 + 1) * 2)
     sta ui_line
 @loop:
@@ -69,8 +88,12 @@ RenderMenu:
     inc ui_index
     lda ui_index
     cmp #TEST_COUNT
+    bcs @menu_done
+    lda ui_line
+    cmp #((22 * 32 + 1) * 2)
     bcc @loop
 
+@menu_done:
     TEXT_AT 1, 22, StrASelect
     TEXT_AT 1, 23, StrStartAll
     rts
@@ -193,6 +216,19 @@ RunAllTests:
 
 @next:
     lda ui_index
+    asl
+    asl
+    asl
+    asl
+    tay
+    sep #$20
+    .a8
+    lda TestRegistry+TD_FLAGS,y
+    and #TEST_FLAG_MANUAL
+    bne @skip_manual
+    rep #$20
+    .a16
+    lda ui_index
     sta current_test
     jsr RenderRunning
     jsr WaitFrame
@@ -218,6 +254,11 @@ RunAllTests:
 @passed:
     inc pass_count
 @advance:
+    rep #$20
+    .a16
+@skip_manual:
+    rep #$20
+    .a16
     inc ui_index
     lda ui_index
     cmp #TEST_COUNT

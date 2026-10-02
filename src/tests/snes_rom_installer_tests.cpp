@@ -3,12 +3,18 @@
 #include <cstdio>
 #include <vector>
 #include "../storage/snes_rom_installer.h"
+#include "../platform/rp2350/qspi_rom.h"
+#include "sdk_stubs/test_flash.h"
 #include "test_support.h"
+
+static bool qspi_usb = true;
+bool snes_bus_usb_mode() { return qspi_usb; }
 
 struct Nor {
     std::vector<uint8_t> bytes = std::vector<uint8_t>(ParallelRomProgrammer::CAPACITY, 0xFF);
     unsigned state = 0;
     bool id = false, active = true, busy = false;
+    bool fail_final_program = false;
     SnesRomInstaller* cancel_target = nullptr;
     uint64_t now = 0;
     static uint8_t read(void* p, uint32_t a) {
@@ -21,7 +27,8 @@ struct Nor {
         if (n.state == 3) {
             test_require(n.busy && n.active, "NOR program without ownership");
             test_require((n.bytes[a] & b) == b, "NOR attempted zero-to-one program");
-            n.bytes[a] &= b;
+            if (!n.fail_final_program || sdk_flash::programs < 768u)
+                n.bytes[a] &= b;
             n.state = 0;
         } else if (b == 0xF0) {
             n.state = 0;
@@ -130,9 +137,98 @@ static void cancellation() {
                  "USB callback abort did not stop in-flight programming");
 }
 
+static void fx3_install(bool dump, uint32_t size = 0x400000u, unsigned failure = 0) {
+    Nor nor;
+    auto hooks = nor.hooks();
+    hooks.program_fx = qspi_rom_program;
+    SnesRomInstaller installer(nor.bus(), hooks);
+    std::vector<uint8_t> rom(size, 0xFF);
+    for (uint32_t i = 0; i < rom.size(); i += 4096u) {
+        rom[i] = static_cast<uint8_t>(i >> 12);
+        rom[i + 1] = static_cast<uint8_t>(i >> 20);
+    }
+    std::fill_n(rom.begin() + 0x7FC0, 21, ' ');
+    rom[0x7FD5] = 0x20; rom[0x7FD6] = 0x18;
+    rom[0x7FD7] = size == 0x100000u ? 0x0A : size == 0x200000u ? 0x0B : 0x0C;
+    rom[0x7FDC] = 0xCB; rom[0x7FDD] = 0xED;
+    rom[0x7FDE] = 0x34; rom[0x7FDF] = 0x12;
+    rom[0x7FFC] = 0; rom[0x7FFD] = 0x80;
+    std::vector<uint8_t> file = rom;
+    if (dump) {
+        file.resize(0x800100u, 0xFF);
+        for (uint32_t i = 0; i < 0x400000u; ++i) {
+            file[i] = rom[(i >> 16) * 0x8000u + (i & 0x7FFFu)];
+            file[0x400000u + i] = rom[i];
+        }
+    }
+    sdk_flash::bytes.fill(0xA5);
+    sdk_flash::programs = sdk_flash::erases = 0;
+    test_require(installer.begin(UsbRomFileType::Sfc) &&
+                     installer.stage(0, file.data(), file.size()), "FX3 staging failed");
+    installer.finish(static_cast<uint32_t>(file.size()));
+    if (failure) {
+        sdk_flash::corrupt_program = failure == 1;
+        nor.fail_final_program = failure == 2;
+        test_require(!installer.process() && !nor.busy &&
+                         installer.status() == SnesRomInstallStatus::FlashError,
+                     "one-device failure reported a successful FX3 installation");
+        test_require(snes_rom_installed_map({&nor, Nor::read}) != SnesRomMap::Fx3,
+                     "FX3 descriptor committed before both flashes verified");
+        sdk_flash::corrupt_program = false;
+        return;
+    }
+    test_require(installer.process() && installer.installed_map() == SnesRomMap::Fx3 && !nor.busy,
+                 "FX3 dual-storage install failed");
+    test_require(sdk_flash::programs == 768 && sdk_flash::erases == 768 &&
+                     !sdk_flash::other_core_parked && !sdk_flash::interrupts_disabled && sdk_flash::xip,
+                 "FX3 QSPI programming count or flash lockout cleanup changed");
+    for (uint32_t i = 0; i < 0x300000u; ++i)
+        test_require(sdk_flash::bytes[0x100000u + i] == rom[size < 0x300000u ? i % size : i],
+                     "FX3 QSPI payload/mirroring changed");
+    test_require(std::all_of(sdk_flash::bytes.begin(), sdk_flash::bytes.begin() + 0x100000,
+                            [](uint8_t value) { return value == 0xA5; }),
+                 "FX3 installation modified firmware/save partitions");
+    for (uint32_t i = 0; i < file.size(); ++i)
+        test_require(installer.read(i) == file[i], "FX3 upload readback lost source data");
+    for (uint32_t i = 0; i < nor.bytes.size(); ++i) {
+        uint32_t source = 0;
+        if (snes_rom_source_offset({SnesRomMap::Fx3, size, 0}, i, source))
+            test_require(nor.bytes[i] == rom[source], "FX3 physical NOR mapping lost data");
+    }
+    test_require(snes_rom_installed_map({&nor, Nor::read}) == SnesRomMap::Fx3,
+                 "FX3 installed descriptor missing");
+}
+
+static void fx3_program_failures() {
+    std::array<uint8_t, 4096> data{};
+    const uint32_t erases = sdk_flash::erases;
+    for (uint32_t offset : {1u, 0x300000u, 0xFFFFFFFFu})
+        test_require(!qspi_rom_program(nullptr, offset, data.data(), 4096u), "invalid FX offset accepted");
+    test_require(!qspi_rom_program(nullptr, 0, nullptr, 4096u) &&
+                     !qspi_rom_program(nullptr, 0, data.data(), 256u), "invalid FX sector accepted");
+    qspi_usb = false;
+    test_require(!qspi_rom_program(nullptr, 0, data.data(), 4096u), "FX write outside USB mode accepted");
+    qspi_usb = true;
+    sdk_flash::fail_enter = true;
+    test_require(!qspi_rom_program(nullptr, 0, data.data(), 4096u), "FX lockout failure ignored");
+    sdk_flash::fail_enter = false;
+    test_require(sdk_flash::erases == erases, "rejected FX write erased flash");
+    sdk_flash::corrupt_program = true;
+    test_require(!qspi_rom_program(nullptr, 0, data.data(), 4096u), "FX verification failure ignored");
+    sdk_flash::corrupt_program = false;
+}
+
 int main() {
     small_fragmented_rom();
     raw_full_capacity();
     cancellation();
+    test_require(!sdk_flash::erases && !sdk_flash::programs, "ordinary/raw upload wrote QSPI");
+    fx3_install(false);
+    fx3_install(false, 0x200000u);
+    fx3_install(false, 0x300000u);
+    fx3_install(true);
+    fx3_install(false, 0x200000u, 1);
+    fx3_install(false, 0x200000u, 2);
+    fx3_program_failures();
     std::puts("snes_rom_installer_tests: PASS");
 }

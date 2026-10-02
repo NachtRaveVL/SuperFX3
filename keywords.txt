@@ -11,6 +11,28 @@ FxState	KEYWORD1
 FxChip	KEYWORD1
 FxTiming	KEYWORD1
 Rp2350FxBackendContext	KEYWORD1
+ParallelRomBus	KEYWORD1
+ParallelRomId	KEYWORD1
+ParallelRomProgrammer	KEYWORD1
+SnesRomMap	KEYWORD1
+SnesRomReader	KEYWORD1
+SnesRomInfo	KEYWORD1
+SnesRomInstallStatus	KEYWORD1
+SnesRomInstallHooks	KEYWORD1
+SnesRomInstaller	KEYWORD1
+UsbRomFileType	KEYWORD1
+UsbRomSink	KEYWORD1
+UsbRomVolume	KEYWORD1
+QspiFlash	KEYWORD1
+Record	KEYWORD1
+
+#######################################
+# Namespaces (KEYWORD1)
+#######################################
+
+fx3_layout	KEYWORD1
+fx3_qspi	KEYWORD1
+fx3_save	KEYWORD1
 
 #######################################
 # SuperFx public API (KEYWORD2)
@@ -55,15 +77,73 @@ fx_sync_reset	KEYWORD2
 snes_bus_init	KEYWORD2
 snes_bus_start	KEYWORD2
 snes_bus_service	KEYWORD2
+snes_bus_usb_mode	KEYWORD2
+snes_bus_local_mode	KEYWORD2
 snes_rom_read	KEYWORD2
 snes_irq_write	KEYWORD2
+snes_busy_irq_write	KEYWORD2
+snes_pio_set_rom_map	KEYWORD2
 snes_pio_start	KEYWORD2
 snes_pio_pause	KEYWORD2
+snes_pio_stop	KEYWORD2
 snes_pio_resume	KEYWORD2
 snes_pio_request_rom_ownership	KEYWORD2
 snes_pio_sync_rom_ownership	KEYWORD2
 snes_pio_reset_pending	KEYWORD2
-snes_pio_clear_reset	KEYWORD2
+snes_pio_service_reset	KEYWORD2
+snes_unpack_address_raw	KEYWORD2
+snes_pack_address_raw	KEYWORD2
+snes_unpack_data_raw	KEYWORD2
+snes_pack_data_raw	KEYWORD2
+snes_address_from_gpio	KEYWORD2
+snes_data_from_gpio	KEYWORD2
+snes_address_to_gpio	KEYWORD2
+snes_data_to_gpio	KEYWORD2
+
+#######################################
+# QSPI save API (KEYWORD2)
+#######################################
+
+qspi_save_init	KEYWORD2
+qspi_save_now	KEYWORD2
+qspi_save_task	KEYWORD2
+qspi_save_last_ok	KEYWORD2
+scan	KEYWORD2
+restore	KEYWORD2
+append	KEYWORD2
+crc32	KEYWORD2
+
+#######################################
+# Parallel ROM and USB API (KEYWORD2)
+#######################################
+
+parallel_rom_gpio_bus	KEYWORD2
+read_id	KEYWORD2
+is_supported_device	KEYWORD2
+erase_chip	KEYWORD2
+erase_sector	KEYWORD2
+program_byte	KEYWORD2
+verify	KEYWORD2
+snes_rom_detect	KEYWORD2
+snes_rom_source_offset	KEYWORD2
+snes_rom_descriptor	KEYWORD2
+snes_rom_installed_map	KEYWORD2
+begin	KEYWORD2
+stage	KEYWORD2
+read	KEYWORD2
+write	KEYWORD2
+finish	KEYWORD2
+flush	KEYWORD2
+abort	KEYWORD2
+process	KEYWORD2
+status	KEYWORD2
+file_size	KEYWORD2
+installed_map	KEYWORD2
+eject	KEYWORD2
+ejected	KEYWORD2
+usb_rom_loader_init	KEYWORD2
+usb_rom_loader_set_enabled	KEYWORD2
+usb_rom_loader_task	KEYWORD2
 
 #######################################
 # Configuration and constants (LITERAL1)
@@ -84,3 +164,43 @@ Y_TILES	LITERAL1
 FRAMEBUFFER_WIDTH	LITERAL1
 FRAMEBUFFER_HEIGHT	LITERAL1
 PLANAR_Y_TILE_STRIDE	LITERAL1
+FLASH_SIZE	LITERAL1
+FIRMWARE_OFFSET	LITERAL1
+FIRMWARE_SIZE	LITERAL1
+SAVE_OFFSET	LITERAL1
+SAVE_SIZE	LITERAL1
+FX_CODE_OFFSET	LITERAL1
+FX_CODE_SIZE	LITERAL1
+FLASH_PAGE_SIZE	LITERAL1
+FLASH_SECTOR_SIZE	LITERAL1
+PAYLOAD_SIZE	LITERAL1
+HEADER_SIZE	LITERAL1
+SLOT_SIZE	LITERAL1
+SLOT_COUNT	LITERAL1
+CAPACITY	LITERAL1
+SECTOR_SIZE	LITERAL1
+SNES_ROM_DESCRIPTOR_ADDRESS	LITERAL1
+SNES_ROM_DESCRIPTOR_SIZE	LITERAL1
+BLOCK_SIZE	LITERAL1
+MAX_FILE_SIZE	LITERAL1
+PAGE_SIZE	LITERAL1
+STAGING_PAGES	LITERAL1
+FIRST_UPLOAD_BLOCK	LITERAL1
+BLOCK_COUNT	LITERAL1
+LoRom	LITERAL1
+HiRom	LITERAL1
+ExLoRom	LITERAL1
+ExHiRom	LITERAL1
+Fx3Physical	LITERAL1
+Sfc	LITERAL1
+Smc	LITERAL1
+Raw	LITERAL1
+Idle	LITERAL1
+Receiving	LITERAL1
+Ready	LITERAL1
+Programming	LITERAL1
+Complete	LITERAL1
+InvalidFile	LITERAL1
+UnsupportedFlash	LITERAL1
+FlashError	LITERAL1
+Aborted	LITERAL1

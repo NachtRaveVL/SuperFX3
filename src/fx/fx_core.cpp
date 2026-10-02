@@ -81,40 +81,6 @@ uint8_t SuperFx::read_operand() {
     return result;
 }
 
-uint16_t SuperFx::read_src() const {
-    return state_.r[state_.src_reg];
-}
-
-// Mesen-derived: closely follows MesenCE Gsu::WriteDestReg().
-void SuperFx::write_dst(uint16_t value) {
-    write_reg(state_.dst_reg, value);
-}
-
-// Mesen-derived: closely follows MesenCE Gsu::WriteRegister(), including R14/R15 side effects.
-void SuperFx::write_reg(uint8_t reg, uint16_t value) {
-    reg &= 0x0F;
-    state_.r[reg] = value;
-
-    if (reg == 14) {
-        // Writing R14 initiates a buffered ROM read.
-        state_.flags.rom_read_pending = true;
-        state_.rom_delay = state_.clock_select ? 5 : 6;
-    } else if (reg == 15) {
-        // Suppress normal end-of-instruction PC increment.
-        r15_changed_ = true;
-    }
-}
-
-// Mesen-derived: closely follows MesenCE Gsu::ResetFlags().
-void SuperFx::reset_prefix() {
-    state_.flags.prefix = false;
-    state_.flags.alt1 = false;
-    state_.flags.alt2 = false;
-
-    state_.src_reg = 0;
-    state_.dst_reg = 0;
-}
-
 // Mesen-derived: closely follows MesenCE Gsu::InvalidateCache().
 void __not_in_flash_func(SuperFx::invalidate_cache)() {
     std::memset(cache_valid_, 0, sizeof(cache_valid_));
