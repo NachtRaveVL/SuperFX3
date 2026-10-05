@@ -29,3 +29,7 @@ void snes_pio_sync_rom_ownership();
 bool snes_pio_reset_pending();
 /// Applies or queues a pending reset before later CPU writes; false requests a retry.
 bool snes_pio_service_reset();
+
+// Switch only the live Core-0 IRQ paths to their audited SRAM implementations.
+bool snes_pio_sd_begin();
+void snes_pio_sd_end();

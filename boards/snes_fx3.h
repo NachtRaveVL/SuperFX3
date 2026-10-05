@@ -21,6 +21,20 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 // For board detection
 #define SNES_FX3
 
+#ifndef SUPERFX3_BOARD_REVISION
+#define SUPERFX3_BOARD_REVISION 1
+#endif
+
+#if SUPERFX3_BOARD_REVISION == 1
+#define SNES_FX3_BOARD_REV_A 1
+#define SNES_FX3_HAS_SD 0
+#elif SUPERFX3_BOARD_REVISION == 2
+#define SNES_FX3_BOARD_REV_B 1
+#define SNES_FX3_HAS_SD 1
+#else
+#error "Unsupported SuperFX3 board revision"
+#endif
+
 // --- RP2350 VARIANT ---
 
 // RP2350B SC1510-A4, 80-pin package with GPIO0-GPIO47.
@@ -28,8 +42,16 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 
 // --- PRESENCE AND LOCAL BUS CONTROL ---
 
-// Active-low console-present detector derived from cartridge-edge 5 V.
+// Console-present detector derived from cartridge-edge 5 V.
+#if SUPERFX3_BOARD_REVISION == 1
 #define SNES_PRES_N_PIN       0
+#define SNES_PRES_PIN         SNES_PRES_N_PIN
+#define SNES_PRES_ACTIVE_LEVEL 0
+#else
+#define SNES_SD_CS_N_PIN      0
+#define SNES_PRES_PIN        32
+#define SNES_PRES_ACTIVE_LEVEL 1
+#endif
 
 // GPIO1-GPIO7 are a contiguous RP2350-driven control group.
 // /RD and /WR are the parallel-ROM strobes, not the translated SNES inputs.
@@ -80,8 +102,16 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 
 // I_* signals are received from the console-side control translator when
 // /C_OE is enabled. With /C_OE disabled, /I_RD and /I_WR remain input-only;
-// firmware drives only /I_RST locally so that reset cannot float.
+// Rev A drives /I_RST locally so that reset cannot float; Rev B drives /O_RST.
+#if SUPERFX3_BOARD_REVISION == 1
 #define SNES_I_IRQ_N_PIN   32
+#define SNES_I_CONTROL_BASE 32
+#define SNES_I_CONTROL_COUNT 6
+#else
+// Rev B replaces /I_IRQ with active-high SNES_PRES; /I_RST stays input-only.
+#define SNES_I_CONTROL_BASE 33
+#define SNES_I_CONTROL_COUNT 5
+#endif
 #define SNES_I_CART_N_PIN  33
 #define SNES_I_RD_N_PIN    34
 #define SNES_I_WR_N_PIN    35
@@ -133,10 +163,13 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 
 // --- GPIO MASKS ---
 
-#define SNES_PRES_N_MASK        (1ULL << SNES_PRES_N_PIN)
+#define SNES_PRES_MASK          (1ULL << SNES_PRES_PIN)
+#if SUPERFX3_BOARD_REVISION == 1
+#define SNES_PRES_N_MASK        SNES_PRES_MASK
+#endif
 #define SNES_LOCAL_CONTROL_MASK (0x7FULL << SNES_LOCAL_CONTROL_BASE)
 #define SNES_ADDR_MASK          (0xFFFFFFULL << SNES_ADDR_RAW_BASE)
-#define SNES_I_CONTROL_MASK     (0x3FULL << SNES_I_IRQ_N_PIN)
+#define SNES_I_CONTROL_MASK     (((1ULL << SNES_I_CONTROL_COUNT) - 1) << SNES_I_CONTROL_BASE)
 #define SNES_O_CONTROL_MASK     (0x3ULL << SNES_O_IRQ_N_PIN)
 #define SNES_DATA_MASK          (0xFFULL << SNES_DATA_RAW_BASE)
 

@@ -43,6 +43,7 @@ struct DmaState {
 };
 
 inline std::array<bool, GPIO_COUNT> gpio_level{};
+inline void (*busy_wait_hook)() = nullptr;
 inline std::array<bool, GPIO_COUNT> gpio_dir{};
 inline std::array<bool, GPIO_COUNT> gpio_pullup{};
 inline std::array<int, GPIO_COUNT> gpio_function{};

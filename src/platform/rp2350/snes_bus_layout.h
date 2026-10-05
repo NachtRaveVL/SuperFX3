@@ -12,7 +12,7 @@
 #include "pico.h"
 
 /// Converts the raw GPIO8-GPIO31 routed order into logical SNES A0-A23 order.
-static inline uint32_t snes_unpack_address_raw(uint32_t raw) {
+static __force_inline uint32_t snes_unpack_address_raw(uint32_t raw) {
     raw &= 0x00FFFFFFu;
     return ((raw >> 23) & 1u) << 0 |
            ((raw >> 21) & 1u) << 1 |
@@ -41,7 +41,7 @@ static inline uint32_t snes_unpack_address_raw(uint32_t raw) {
 }
 
 /// Converts logical SNES A0-A23 order into the raw GPIO8-GPIO31 routed order.
-static inline uint32_t snes_pack_address_raw(uint32_t address) {
+static __force_inline uint32_t snes_pack_address_raw(uint32_t address) {
     address &= 0x00FFFFFFu;
     return ((address >> 12) & 1u) << 0 |
            ((address >> 11) & 1u) << 1 |
@@ -70,7 +70,7 @@ static inline uint32_t snes_pack_address_raw(uint32_t address) {
 }
 
 /// Converts raw GPIO40-GPIO47 order into logical SNES D0-D7 order.
-static inline uint8_t snes_unpack_data_raw(uint8_t raw) {
+static __force_inline uint8_t snes_unpack_data_raw(uint8_t raw) {
     return static_cast<uint8_t>(
         ((raw >> 1) & 1u) << 0 |
         ((raw >> 3) & 1u) << 1 |
@@ -84,7 +84,7 @@ static inline uint8_t snes_unpack_data_raw(uint8_t raw) {
 }
 
 /// Converts logical SNES D0-D7 order into raw GPIO40-GPIO47 order.
-static inline uint8_t snes_pack_data_raw(uint8_t data) {
+static __force_inline uint8_t snes_pack_data_raw(uint8_t data) {
     return static_cast<uint8_t>(
         ((data >> 4) & 1u) << 0 |
         ((data >> 0) & 1u) << 1 |
@@ -97,22 +97,22 @@ static inline uint8_t snes_pack_data_raw(uint8_t data) {
     );
 }
 
-static inline uint32_t snes_address_from_gpio(uint64_t gpio) {
+static __force_inline uint32_t snes_address_from_gpio(uint64_t gpio) {
     return snes_unpack_address_raw(
         static_cast<uint32_t>((gpio & SNES_ADDR_MASK) >> SNES_ADDR_RAW_BASE)
     );
 }
 
-static inline uint8_t snes_data_from_gpio(uint64_t gpio) {
+static __force_inline uint8_t snes_data_from_gpio(uint64_t gpio) {
     return snes_unpack_data_raw(
         static_cast<uint8_t>((gpio & SNES_DATA_MASK) >> SNES_DATA_RAW_BASE)
     );
 }
 
-static inline uint64_t snes_address_to_gpio(uint32_t address) {
+static __force_inline uint64_t snes_address_to_gpio(uint32_t address) {
     return static_cast<uint64_t>(snes_pack_address_raw(address)) << SNES_ADDR_RAW_BASE;
 }
 
-static inline uint64_t snes_data_to_gpio(uint8_t data) {
+static __force_inline uint64_t snes_data_to_gpio(uint8_t data) {
     return static_cast<uint64_t>(snes_pack_data_raw(data)) << SNES_DATA_RAW_BASE;
 }

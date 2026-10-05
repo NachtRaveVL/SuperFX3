@@ -7,6 +7,10 @@
 
 #pragma once
 
+// Exclusive full-screen video ownership, acquired only with the GSU stopped.
+bool fx_sync_video_acquire();
+void fx_sync_video_release();
+
 #include <stdint.h>
 
 #include "../../fx/fx_core.h"
@@ -38,3 +42,12 @@ uint8_t fx_sync_blocked_rom_value(uint32_t addr);
 /// Resets immediately or queues reset for core 1 when it owns the SuperFX state.
 /// @return True when reset was applied or successfully queued, or false when the command queue is full.
 bool fx_sync_reset();
+
+// Live SD window: core 1 is between instructions and core 0 serves only SRAM paths.
+bool fx_sync_sd_begin();
+uint8_t fx_sync_sd_cpu_read(uint16_t addr);
+bool fx_sync_sd_cpu_write(uint16_t addr, uint8_t value);
+uint8_t fx_sync_sd_ram_read(uint32_t addr);
+void fx_sync_sd_ram_write(uint32_t addr, uint8_t value);
+void fx_sync_sd_reset();
+void fx_sync_sd_drain_writes();

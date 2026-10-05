@@ -8,6 +8,7 @@
 #include "fx_backend.h"
 
 #include "../../storage/fx3_qspi_layout.h"
+#include "snes_bus.h"
 
 #include "hardware/regs/addressmap.h"
 #include "pico.h"
@@ -92,3 +93,16 @@ FxBackend fx_backend_create(Rp2350FxBackendContext* context) {
 
     return backend;
 }
+
+#if SUPERFX3_AUDIO_SD
+bool fx_backend_sd_safe(const FxBackend& backend) {
+    const uintptr_t context = reinterpret_cast<uintptr_t>(backend.context);
+    if (context < SRAM_BASE || context > SRAM_END - sizeof(Rp2350FxBackendContext))
+        return false;
+    const auto* ctx = static_cast<const Rp2350FxBackendContext*>(backend.context);
+    const uintptr_t ram = reinterpret_cast<uintptr_t>(ctx->ram);
+    return ram >= SRAM_BASE && ram < SRAM_END && ctx->ram_size <= SRAM_END - ram &&
+        backend.ram_read == fx_ram_read && backend.ram_write == fx_ram_write &&
+        backend.set_irq == fx_set_irq && ctx->irq_write == snes_irq_write;
+}
+#endif

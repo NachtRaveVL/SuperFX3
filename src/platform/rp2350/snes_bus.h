@@ -19,7 +19,7 @@ void snes_bus_init();
 void snes_bus_start(SuperFx& fx);
 /// Services reset, ROM ownership, and core-1 requests for exclusive physical bus access.
 void snes_bus_service();
-/// True only while /SNES_PRES is deasserted and the translated console bus is isolated.
+/// True only while console presence is deasserted and the translated bus is isolated.
 bool snes_bus_usb_mode();
 /// True while translators isolate the console, including the boot-time ROM probe.
 bool snes_bus_local_mode();

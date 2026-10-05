@@ -8,6 +8,7 @@
 #include "hardware/pio.h"
 #include "test_hardware.h"
 
+#include "../audio/fx3_audio_stream.h"
 #include "../platform/rp2350/fx_sync.h"
 #include "../platform/rp2350/snes_bus.h"
 #include "../platform/rp2350/snes_bus_layout.h"
@@ -61,7 +62,7 @@ static void init_bus(SuperFx& fx, TestMemory& memory, const FxConfig& config) {
     fx_sync_init(fx, backend);
     snes_bus_init();
     snes_pio_set_rom_map(SnesRomMap::Fx3Physical);
-    sdk_test::set_gpio_level(SNES_PRES_N_PIN, false);
+    sdk_test::set_gpio_level(SNES_PRES_PIN, SNES_PRES_ACTIVE_LEVEL);
     snes_bus_start(fx);
 }
 
@@ -180,6 +181,37 @@ static void test_noncartridge_reads_do_not_drive() {
     inject_write(0x20, 0x703B, 0xA6);
     test_require(inject_read(0x20, 0x703B) == 0xA6,
                  "ExHiROM SRAM shadowed by FX3 register mirrors");
+    inject_write(0x20, fx3_audio::HDMA_BASE, 0x3C);
+    test_require(inject_read(0x20, fx3_audio::HDMA_BASE) == 0x3C,
+                 "FX3 audio window shadowed ExHiROM SRAM");
+}
+
+static void test_fx3_audio_host_window() {
+    TestMemory memory{};
+    SuperFx fx;
+    init_bus(fx, memory, fx3_config);
+    fx3_audio_init({});
+
+    inject_write(0x00, static_cast<uint16_t>(fx3_audio::MMIO_BASE +
+                                             fx3_audio::AssetIdLow), 0x5A);
+    test_require(inject_read(0x00, static_cast<uint16_t>(fx3_audio::MMIO_BASE +
+                                                         fx3_audio::AssetIdLow)) == 0x5A,
+                 "FX3 audio host write did not reach the explicit MMIO block");
+    inject_write(0x00, static_cast<uint16_t>(fx3_audio::MMIO_BASE +
+                                             fx3_audio::Command),
+                 static_cast<uint8_t>(Fx3AudioCommand::Play));
+    fx3_audio_task();
+    test_require(inject_read(0x00, static_cast<uint16_t>(fx3_audio::MMIO_BASE +
+                                                         fx3_audio::Status)) ==
+                     static_cast<uint8_t>(Fx3AudioStatus::Error) &&
+                     inject_read(0x00, static_cast<uint16_t>(fx3_audio::MMIO_BASE +
+                                                             fx3_audio::Error)) ==
+                         static_cast<uint8_t>(Fx3AudioError::Unavailable),
+                 "Rev-A PLAY did not fail safely when SD is unavailable");
+    test_require(inject_read(0x80, fx3_audio::HDMA_BASE) == 0,
+                 "disabled Rev-A audio window exposed parallel ROM data");
+    test_require(inject_read_word(0x40, fx3_audio::HDMA_BASE, true) == 0,
+                 "FX3 audio window was decoded outside low cartridge banks");
 }
 
 static void test_dma_bridges() {
@@ -282,21 +314,32 @@ static void test_console_presence_and_local_reset() {
     SuperFx fx;
     init_bus(fx, memory, fx3_config);
 
-    sdk_test::set_gpio_level(SNES_PRES_N_PIN, true);
+    sdk_test::set_gpio_level(SNES_PRES_PIN, !SNES_PRES_ACTIVE_LEVEL);
     snes_bus_service();
     test_require(snes_bus_usb_mode(),
                  "deasserted /SNES_PRES did not select USB mode");
     require_control_word(SNES_CONTROL_STANDALONE,
                          "console removal did not disable C_OE#/A_OE#/D_OE# and ROM strobes");
+#if SUPERFX3_BOARD_REVISION == 1
     test_require(sdk_test::gpio_dir[SNES_I_RESET_N_PIN] &&
                      sdk_test::gpio_level[SNES_I_RESET_N_PIN],
                  "C_OE# disable did not leave I_RST# locally driven inactive");
+#else
+    test_require(!sdk_test::gpio_dir[SNES_I_RESET_N_PIN] &&
+                     sdk_test::gpio_dir[SNES_O_RESET_N_PIN] &&
+                     sdk_test::gpio_level[SNES_O_RESET_N_PIN] &&
+                     !sdk_test::gpio_dir[SNES_PRES_PIN] &&
+                     !sdk_test::gpio_pullup[SNES_PRES_PIN] &&
+                     sdk_test::gpio_dir[SNES_SD_CS_N_PIN] &&
+                     sdk_test::gpio_level[SNES_SD_CS_N_PIN],
+                 "Rev-B presence/SD/reset pins did not retain their isolated directions");
+#endif
     require_translated_strobes_input("standalone mode drove /I_RD or /I_WR");
     test_require(!sdk_test::pio[PIO1_INDEX].enabled[RESET_SM] &&
                      !sdk_test::pio[PIO2_INDEX].enabled[READ_SM],
                  "standalone mode left PIO console watchers running");
 
-    sdk_test::set_gpio_level(SNES_PRES_N_PIN, false);
+    sdk_test::set_gpio_level(SNES_PRES_PIN, SNES_PRES_ACTIVE_LEVEL);
     snes_bus_service();
     test_require(!snes_bus_usb_mode(),
                  "asserted /SNES_PRES did not select SNES mode");
@@ -406,6 +449,7 @@ int main() {
     test_routed_packers();
     test_fx3_frontend_round_trip();
     test_noncartridge_reads_do_not_drive();
+    test_fx3_audio_host_window();
     test_dma_bridges();
     test_fx3_never_steals_parallel_rom_bus();
     test_legacy_physical_rom_transaction();

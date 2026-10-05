@@ -48,6 +48,10 @@ inline void gpio_pull_up(uint pin) {
     sdk_test::gpio_pullup.at(pin) = true;
     sdk_test::gpio_level.at(pin) = true;
 }
+inline void gpio_pull_down(uint pin) {
+    sdk_test::gpio_pullup.at(pin) = false;
+    sdk_test::gpio_level.at(pin) = false;
+}
 inline void gpio_set_function(uint pin, int function) {
     sdk_test::gpio_function.at(pin) = function;
 }

@@ -9,6 +9,7 @@
 
 #include "snes_bus.h"
 #include "snes_pio.h"
+#include "qspi_bus.h"
 #include "storage/fx3_save_journal.h"
 #include "hardware/flash.h"
 #include "hardware/gpio.h"
@@ -31,7 +32,6 @@ bool g_last_reset = false;
 bool g_safe = false;
 std::atomic<bool> g_enabled {true};
 std::atomic<bool> g_ok {true};
-std::atomic_flag g_saving = ATOMIC_FLAG_INIT;
 bool g_have_save = false;
 
 bool save_range(uint32_t offset, uint32_t size, uint32_t alignment) {
@@ -99,7 +99,7 @@ void qspi_save_init(std::atomic<uint8_t>* ram, bool enabled) {
             g_snapshot[i] = ram[i].load(std::memory_order_relaxed);
     }
     g_saved_crc = fx3_save::crc32(g_snapshot, sizeof(g_snapshot));
-    g_last_usb = gpio_get(SNES_PRES_N_PIN);
+    g_last_usb = gpio_get(SNES_PRES_PIN) != SNES_PRES_ACTIVE_LEVEL;
     g_last_reset = false;
     g_ok = true;
 }
@@ -116,13 +116,13 @@ bool qspi_save_now(void*) {
         return true;
     // Reset/disconnect fallback runs on core 0; the instruction runs on core 1.
     // Never wait for the other writer while it may be requesting our lockout.
-    if (!g_ram || g_saving.test_and_set(std::memory_order_acquire))
+    if (!g_ram || !qspi_bus_try_acquire())
         return false;
     g_ok = true;
     if (flash_safe_execute(save_snapshot, nullptr, 1000) != PICO_OK)
         g_ok = false;
     const bool ok = g_ok.load();
-    g_saving.clear(std::memory_order_release);
+    qspi_bus_release();
     return ok;
 }
 
