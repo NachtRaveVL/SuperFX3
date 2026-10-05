@@ -53,6 +53,34 @@ int main() {
     std::array<uint8_t, 512> block{};
     test_require(volume.read(0, block.data(), block.size()) && block[510] == 0x55 && block[511] == 0xAA,
                  "virtual FAT16 boot sector is invalid");
+    volume.set_capacity(1024u * 1024u);
+    test_require(volume.read(0, block.data(), block.size()), "resized boot sector was unreadable");
+    const uint32_t total_blocks = static_cast<uint32_t>(block[32]) |
+        (static_cast<uint32_t>(block[33]) << 8) |
+        (static_cast<uint32_t>(block[34]) << 16) |
+        (static_cast<uint32_t>(block[35]) << 24);
+    test_require(volume.block_count() == UsbRomVolume::FIRST_UPLOAD_BLOCK +
+                         (1024u * 1024u / UsbRomVolume::PAGE_SIZE + 4u) * 8u &&
+                     total_blocks == volume.block_count() &&
+                     std::memcmp(block.data() + 54, "FAT12   ", 8) == 0,
+                 "8-Mbit device did not resize the advertised FAT volume");
+    test_require(volume.read(1, block.data(), block.size()), "FAT12 table was unreadable");
+    block[4] = static_cast<uint8_t>((block[4] & 0x0Fu) | 0xF0u);
+    block[5] = 0xFF;
+    test_require(volume.write(1, block.data(), block.size()), "FAT12 entry write failed");
+    block.fill(0);
+    std::memcpy(block.data(), "SMALL   SFC", 11);
+    block[11] = 0x20;
+    put16(block.data(), 26, 3);
+    put32(block.data(), 28, 512);
+    test_require(volume.write(65, block.data(), block.size()), "FAT12 root write failed");
+    block.fill(0x3C);
+    test_require(volume.write(89, block.data(), block.size()) && volume.eject() &&
+                     sink.completed == 512,
+                 "FAT12 upload chain did not complete");
+    volume.set_capacity(UsbRomVolume::MAX_CAPACITY);
+    sink.begun = false;
+    sink.completed = 0;
 
     // FAT cluster 3 is the one-cluster upload chain.
     block.fill(0);

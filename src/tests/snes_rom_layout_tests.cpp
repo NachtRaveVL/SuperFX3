@@ -71,6 +71,11 @@ static void test_header_detection_ignores_extension() {
                                  static_cast<uint32_t>(unheadered.size()), true, info) &&
                      info.data_offset == 0,
                  "an unheadered .smc was shifted based only on its extension");
+
+    std::vector<uint8_t> fake_header(512u * 1024u + 512u, 0xA5);
+    test_require(!snes_rom_detect({&fake_header, read_vector},
+                                  static_cast<uint32_t>(fake_header.size()), true, info),
+                 "a 512-byte size remainder was mistaken for a copier header");
 }
 
 static void test_extended_maps() {
@@ -111,12 +116,15 @@ static void test_fx3() {
     for (uint32_t i = 0; i < rom.size(); ++i)
         rom[i] = static_cast<uint8_t>((i >> 12) ^ (i >> 19) ^ i);
     add_header(rom, 0x7FC0u, 0x20);
+    rom[0x7FBD] = 5;
     rom[0x7FD7] = 0x0C;
     SnesRomInfo info{};
     for (uint32_t type : {0x17u, 0x18u}) {
         rom[0x7FD6] = static_cast<uint8_t>(type);
         test_require(snes_rom_detect({&rom, read_vector}, 0x400000u, false, info) &&
-                         info.map == SnesRomMap::Fx3 && info.size == 0x400000u && !info.data_offset,
+                         info.map == SnesRomMap::Fx3 && info.size == 0x400000u &&
+                         !info.data_offset && info.ram_size == 32u * 1024u &&
+                         snes_rom_has_persistent_ram(info) == (type == 0x18u),
                      "canonical FX3 was misdetected as an ordinary ROM");
     }
     for (uint32_t address = 0; address < 0x1000000u; address += 0x1000u) {
@@ -142,6 +150,13 @@ static void test_fx3() {
                          info.map == SnesRomMap::Fx3 && info.data_offset == 0x400000u &&
                          info.size == 0x400000u, "production FX3 dump/trailer was not stripped");
     }
+    std::vector<uint8_t> headered_dump(512u + dump.size(), 0);
+    std::copy(dump.begin(), dump.end(), headered_dump.begin() + 512u);
+    test_require(snes_rom_detect({&headered_dump, read_vector},
+                                 static_cast<uint32_t>(headered_dump.size()), false, info) &&
+                     info.map == SnesRomMap::Fx3 && info.data_offset == 0x400200u &&
+                     info.size == 0x400000u,
+                 "content-valid copier header plus FX3 erased trailer was not detected");
     for (uint32_t offset : {0u, 0x8000u, 0x3FFFFFu, 0x800000u}) {
         dump[offset] ^= 1;
         test_require(!snes_rom_detect({&dump, read_vector}, 0x800100u, false, info),
@@ -152,9 +167,13 @@ static void test_fx3() {
     test_require(!snes_rom_detect({&dump, read_vector}, 0x800000u, false, info) ||
                      (info.map != SnesRomMap::Fx3 && info.size == 0x800000u),
                  "arbitrary 8 MiB image stripped as FX3");
-    snes_rom_descriptor({SnesRomMap::Fx3, 0x400000u, 0}, dump.data() + SNES_ROM_DESCRIPTOR_ADDRESS);
-    test_require(snes_rom_installed_map({&dump, read_vector}) == SnesRomMap::Fx3,
-                 "FX3 descriptor did not survive reboot");
+    snes_rom_descriptor({SnesRomMap::Fx3, 0x400000u, 0, 32u * 1024u, 0x17u},
+                        dump.data() + SNES_ROM_DESCRIPTOR_ADDRESS);
+    const SnesRomInfo installed = snes_rom_installed_info({&dump, read_vector});
+    test_require(installed.map == SnesRomMap::Fx3 && installed.ram_size == 32u * 1024u &&
+                     installed.cartridge_type == 0x17u &&
+                     !snes_rom_has_persistent_ram(installed),
+                 "FX3 descriptor lost SRAM/type metadata");
     dump[SNES_ROM_DESCRIPTOR_ADDRESS + 12u] ^= 1;
     test_require(snes_rom_installed_map({&dump, read_vector}) == SnesRomMap::Fx3Physical,
                  "corrupt descriptor selected canonical FX3");

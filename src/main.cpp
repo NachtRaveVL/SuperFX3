@@ -12,13 +12,18 @@
 
 #include <atomic>
 
+#include "audio/fx3_audio_stream.h"
+#include "video/fx3_video_stream.h"
 #include "platform/rp2350/snes_bus.h"
 #include "fx/fx_core.h"
+#include "platform/rp2350/fx3_audio_sd.h"
+#include "platform/rp2350/fx3_video_sd.h"
 #include "platform/rp2350/fx_backend.h"
 #include "platform/rp2350/fx_sync.h"
 #include "platform/rp2350/parallel_rom_gpio.h"
 #include "platform/rp2350/snes_pio.h"
 #include "platform/rp2350/qspi_save.h"
+#include "platform/rp2350/qspi_bus.h"
 #include "usb/usb_rom_loader.h"
 
 #include "hardware/clocks.h"
@@ -51,7 +56,17 @@ void __not_in_flash_func(core1_main)() {
     if (!flash_safe_execute_core_init())
         panic("Unable to initialize core-1 flash safety");
     g_core1_ready.store(true, std::memory_order_release);
+#if SUPERFX3_AUDIO_SD
+    uint8_t audio_service = 0;
+#endif
     while (true) {
+#if SUPERFX3_AUDIO_SD
+        if (!audio_service++) {
+            fx3_audio_task();
+            fx_sync_core1_service();
+            fx3_video_task();
+        }
+#endif
         if (!fx_sync_core1_service())
             tight_loop_contents();
     }
@@ -70,19 +85,22 @@ int main() {
 
     snes_bus_init();
     const ParallelRomBus parallel = parallel_rom_gpio_bus();
-    snes_pio_set_rom_map(snes_rom_installed_map({parallel.context, parallel.read}));
+    const SnesRomInfo installed = snes_rom_installed_info({parallel.context, parallel.read});
+    snes_pio_set_rom_map(installed.map, installed.ram_size);
 
     // FX3 reads the game's FX-visible ROM mapping from the primary QSPI flash
     // through XIP. Parallel NOR holds the canonical game's SNES-visible mapping.
     if (!fx3_qspi_rom_init(g_fx_backend_context))
         panic("FX3 firmware overlaps the reserved QSPI save partition");
-    qspi_save_init(g_ram);
+    qspi_save_init(g_ram, snes_rom_has_persistent_ram(installed));
+    fx3_audio_init(fx3_audio_sd_source());
 
     FxBackend backend = fx_backend_create(&g_fx_backend_context);
     backend.save = qspi_save_now;
 
     fx.init(fx3_config, backend);
     fx_sync_init(fx, backend);
+    fx3_video_init(fx3_video_sd_source(), g_ram, fx_sync_video_acquire, fx_sync_video_release);
     snes_bus_start(fx);
 
     usb_rom_loader_init();
@@ -97,8 +115,9 @@ int main() {
         tight_loop_contents();
 
     while (true) { // core0 loop
+        qspi_bus_core0_service();
         // Cancel and release storage ownership before reconnecting translators.
-        if (!gpio_get(SNES_PRES_N_PIN))
+        if (gpio_get(SNES_PRES_PIN) == SNES_PRES_ACTIVE_LEVEL)
             usb_rom_loader_set_enabled(false);
         snes_bus_service();
         qspi_save_task();

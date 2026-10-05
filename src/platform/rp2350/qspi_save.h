@@ -11,7 +11,9 @@
 #include <stdint.h>
 
 /// Restores persistent SRAM before either the SNES or core 1 can access it.
-void qspi_save_init(std::atomic<uint8_t>* ram);
+void qspi_save_init(std::atomic<uint8_t>* ram, bool enabled = true);
+/// Enables persistence for battery-backed cartridge types without restoring an old journal.
+void qspi_save_set_enabled(bool enabled);
 /// Synchronous SAVE_AND_STOP backend, called by core 1 after guest execution stops.
 /// Parks the other core through snapshot/commit/verify; never signals an IRQ.
 bool qspi_save_now(void* context);

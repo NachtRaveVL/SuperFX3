@@ -38,6 +38,7 @@ class SnesRomInstaller {
 public:
     SnesRomInstaller(const ParallelRomBus& bus, const SnesRomInstallHooks& hooks);
 
+    bool probe();
     bool begin(UsbRomFileType type);
     bool stage(uint32_t file_offset, const uint8_t* data, size_t size);
     uint8_t read(uint32_t file_offset) const;
@@ -50,15 +51,15 @@ public:
 
     SnesRomInstallStatus status() const { return status_; }
     uint32_t file_size() const { return file_size_; }
-    SnesRomMap installed_map() const {
+    uint32_t capacity() const { return capacity_; }
+    SnesRomInfo installed_info() const {
         return type_ == UsbRomFileType::Raw ?
-            snes_rom_installed_map({bus_.context, bus_.read}) : installed_info_.map;
+            snes_rom_installed_info({bus_.context, bus_.read}) : installed_info_;
     }
+    SnesRomMap installed_map() const { return installed_info().map; }
 
 private:
     static constexpr uint32_t MIB = 1024u * 1024u;
-    static constexpr uint32_t LOWER_TEMP_BASE = 8u * MIB;
-    static constexpr uint32_t UPPER_TEMP_BASE = 12u * MIB;
     static constexpr uint32_t PAGE_SIZE = 4096u;
     static constexpr uint32_t MAX_SOURCE_PAGES = (8u * MIB) / PAGE_SIZE;
 
@@ -70,8 +71,12 @@ private:
     bool materialize_upload();
     bool copy_to_temp(uint32_t source_offset, uint32_t size,
                       uint32_t destination, bool descending);
-    uint8_t read_install_source(uint32_t offset, uint32_t destination_sector) const;
+    bool read_install_source(const SnesRomInfo& info, uint32_t offset,
+                             uint8_t& value) const;
+    bool mapping_fits(const SnesRomInfo& info);
     bool program_sector(uint32_t address, const SnesRomInfo& info);
+    bool program_range(uint32_t begin, uint32_t end, bool descending,
+                       const SnesRomInfo& info);
     bool install(const SnesRomInfo& info);
     bool verify_raw() const;
     void build_representatives(const SnesRomInfo& info);
@@ -85,15 +90,19 @@ private:
     UsbRomFileType type_ = UsbRomFileType::Sfc;
     bool busy_ = false;
     uint32_t file_size_ = 0;
+    uint32_t capacity_ = 0;
     SnesRomInfo installed_info_{};
     uint32_t representative_[MAX_SOURCE_PAGES]{};
-    uint8_t erased_sectors_[ParallelRomProgrammer::CAPACITY /
+    uint8_t erased_sectors_[ParallelRomProgrammer::MAX_CAPACITY /
                             ParallelRomProgrammer::SECTOR_SIZE / 8u]{};
+    uint8_t final_sectors_[ParallelRomProgrammer::MAX_CAPACITY /
+                           ParallelRomProgrammer::SECTOR_SIZE / 8u]{};
     uint8_t copier_header_[512]{};
     uint8_t sector_buffer_[ParallelRomProgrammer::SECTOR_SIZE]{};
-    uint8_t spill_[UsbRomVolume::STAGING_PAGES * PAGE_SIZE - ParallelRomProgrammer::CAPACITY]{};
+    uint8_t spill_[UsbRomVolume::MAX_STAGING_PAGES * PAGE_SIZE -
+                   ParallelRomProgrammer::MAX_CAPACITY]{};
     uint8_t swap_[2][PAGE_SIZE]{};
-    uint16_t upload_pages_[UsbRomVolume::STAGING_PAGES]{};
+    uint16_t upload_pages_[UsbRomVolume::MAX_STAGING_PAGES]{};
     uint32_t upload_page_count_ = 0;
     uint32_t staging_sector_ = 0xFFFFFFFFu;
     bool staging_dirty_ = false;

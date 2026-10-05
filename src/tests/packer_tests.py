@@ -64,9 +64,9 @@ def main() -> None:
         if data[0x7C000:0x100000] != b"\xFF" * 0x84000:
             fail("default image did not leave the save journal erased")
         if data[0x100000:0x100004] != b"\x11\x22\x33\x44":
-            fail("default layout did not place private FX code at 0x100000")
+            fail("default layout did not place the FX-visible ROM at 0x100000")
         if data[0x100004:0x100100] != b"\xFF" * 0xFC:
-            fail("unused FX code space was not padded with 0xFF")
+            fail("unused FX ROM space was not padded with 0xFF")
 
         run(str(firmware), str(rom), str(temp / "bad-size.bin"),
             "--flash-size", "8M", ok=False)
@@ -79,7 +79,7 @@ def main() -> None:
                 boundary[0x7C000:0x100000] != b"\xFF" * 0x84000:
             fail("maximum firmware did not preserve the full 528 KiB save partition")
         if boundary[0x100000:0x100004] != rom.read_bytes():
-            fail("maximum firmware moved the FX-code partition")
+            fail("maximum firmware moved the FX-ROM partition")
         overlap_fw.write_bytes(b"\xAA" * (0x7C000 + 1))
         run(str(overlap_fw), str(rom), str(temp / "bad-overlap.bin"), ok=False)
 
@@ -91,7 +91,10 @@ def main() -> None:
             "--rom-offset", "0x101000", ok=False)
 
         canonical = bytearray(b"\x55" * 0x300000 + b"\xAA" * 0x100000)
-        canonical[0x7FD6:0x7FD8] = b"\x17\x0C"
+        canonical[0x7FC0:0x7FD5] = b" " * 21
+        canonical[0x7FD5:0x7FD8] = b"\x20\x17\x0C"
+        canonical[0x7FDC:0x7FE0] = b"\xCB\xED\x34\x12"
+        canonical[0x7FFC:0x7FFE] = b"\x00\x80"
         rom.write_bytes(canonical)
         run(str(firmware), str(rom), str(image), "--fx3-rom")
         if image.read_bytes()[0x100000:] != canonical[:0x300000]:

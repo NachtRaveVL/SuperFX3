@@ -10,8 +10,10 @@ MIB = 1024 * 1024
 KIB = 1024
 BUS_IMAGE_SIZE = 16 * MIB
 PAGE_SIZE = 0x1000
-CHIP_SIZE_MBIT_CHOICES = (1, 2, 4, 8, 16, 32, 64, 128)
+CHIP_SIZE_MBIT_CHOICES = (8, 16, 32, 64, 128)
 DESCRIPTOR_ADDRESS = 0x7E0000
+FX3_TYPE = 0x17
+FX3_BATTERY_TYPE = 0x18
 
 
 class RomMap(Enum):
@@ -26,6 +28,113 @@ class RomMap(Enum):
 
 class ImageCapacityError(ValueError):
     pass
+
+
+def header_score(rom: bytes, offset: int, mapping: RomMap) -> int:
+    if offset < 0 or offset + 0x40 > len(rom):
+        return -1
+    map_mode = rom[offset + 0x15]
+    complement = int.from_bytes(rom[offset + 0x1C:offset + 0x1E], "little")
+    checksum = int.from_bytes(rom[offset + 0x1E:offset + 0x20], "little")
+    reset_vector = int.from_bytes(rom[offset + 0x3C:offset + 0x3E], "little")
+    score = 0
+    if checksum not in (0, 0xFFFF) and checksum ^ complement == 0xFFFF:
+        score += 8
+    hirom = mapping in (RomMap.HIROM, RomMap.EXHIROM)
+    if bool(map_mode & 1) == hirom:
+        score += 4
+    if mapping == RomMap.EXHIROM and map_mode & 0x0F == 0x05:
+        score += 3
+    if mapping == RomMap.EXLOROM and map_mode & 0x0F in (0x00, 0x02):
+        score += 2
+    if map_mode & 0x20:
+        score += 1
+    if reset_vector >= 0x8000:
+        score += 2
+    title = rom[offset:offset + 21]
+    if sum(value == 0 or value == 0x20 or 0x21 <= value <= 0x7E for value in title) >= 19:
+        score += 2
+    return score
+
+
+def source_header_score(rom: bytes, mapping: RomMap) -> int:
+    if mapping in (RomMap.LOROM, RomMap.FX3):
+        return header_score(rom, 0x7FC0, RomMap.LOROM)
+    if mapping == RomMap.HIROM:
+        return header_score(rom, 0xFFC0, mapping)
+    if mapping == RomMap.EXLOROM:
+        return max(header_score(rom, 0x7FC0, mapping),
+                   header_score(rom, 0x407FC0, mapping))
+    if mapping == RomMap.EXHIROM:
+        return header_score(rom, 0x40FFC0, mapping)
+    if mapping == RomMap.SUPERFX_EXTENDED:
+        return max(header_score(rom, 0x7FC0, RomMap.LOROM),
+                   header_score(rom, 0x407FC0, RomMap.LOROM))
+    return -1
+
+
+def best_header_offset(rom: bytes, mapping: RomMap) -> int | None:
+    if mapping in (RomMap.LOROM, RomMap.FX3):
+        offsets = (0x7FC0,)
+    elif mapping == RomMap.HIROM:
+        offsets = (0xFFC0,)
+    elif mapping == RomMap.EXLOROM:
+        offsets = (0x7FC0, 0x407FC0)
+    elif mapping == RomMap.EXHIROM:
+        offsets = (0x40FFC0,)
+    elif mapping == RomMap.SUPERFX_EXTENDED:
+        offsets = (0x7FC0, 0x407FC0)
+    else:
+        return None
+
+    candidates = [(header_score(rom, offset, mapping), offset)
+                  for offset in offsets if offset + 0x40 <= len(rom)]
+    if not candidates:
+        return None
+    best_score = max(score for score, _ in candidates)
+    if best_score < 8:
+        return None
+    offsets = {offset for score, offset in candidates if score == best_score}
+    if len({rom[offset + 0x17] for offset in offsets}) != 1:
+        raise ValueError("ambiguous SNES ROM size headers")
+    return min(offsets)
+
+
+def declared_rom_size(rom: bytes, mapping: RomMap) -> int | None:
+    offset = best_header_offset(rom, mapping)
+    if offset is None:
+        return None
+    code = rom[offset + 0x17]
+    if code < 0x07 or code > 0x0E:
+        return None
+    return 1 << (code + 10)
+
+
+def declared_sram(rom: bytes, mapping: RomMap) -> tuple[int, int]:
+    offset = best_header_offset(rom, mapping)
+    if offset is None:
+        return 128 * KIB, FX3_BATTERY_TYPE
+    cartridge_type = rom[offset + 0x16]
+    code = rom[offset + 0x18]
+    if 0x13 <= cartridge_type <= 0x18 and rom[offset - 3] <= 7:
+        code = rom[offset - 3]
+    if code == 0:
+        return 0, cartridge_type
+    return (1 << (code + 10) if code <= 7 else 128 * KIB), cartridge_type
+
+
+def strip_copier_header(rom: bytes, mapping: RomMap) -> bytes:
+    plain_score = source_header_score(rom, mapping)
+    shifted_score = source_header_score(rom[512:], mapping) if len(rom) > 512 else -1
+    plain_valid = plain_score >= 8
+    shifted_valid = shifted_score >= 8
+    if plain_valid and shifted_valid:
+        if plain_score == shifted_score:
+            raise ValueError("ambiguous 512-byte copier header")
+        return rom[512:] if shifted_score > plain_score else rom
+    if shifted_valid:
+        return rom[512:]
+    return rom
 
 
 def mirror_offset(size: int, offset: int) -> int:
@@ -75,8 +184,17 @@ def validate_source(rom: bytes, mapping: RomMap) -> None:
 
 
 def normalize_fx3_rom(rom: bytes) -> bytes:
-    if len(rom) % 0x8000 == 512:
-        rom = rom[512:]
+    if len(rom) in (8 * MIB, 8 * MIB + 256, 8 * MIB + 512, 8 * MIB + 768):
+        plain_base = 4 * MIB
+        shifted_base = 512 + 4 * MIB
+        plain_score = header_score(rom, plain_base + 0x7FC0, RomMap.LOROM)
+        shifted_score = header_score(rom, shifted_base + 0x7FC0, RomMap.LOROM)
+        if shifted_score >= 8 and shifted_score > plain_score:
+            rom = rom[512:]
+        elif plain_score >= 8 and shifted_score >= 8 and plain_score == shifted_score:
+            raise ValueError("ambiguous 512-byte copier header")
+    else:
+        rom = strip_copier_header(rom, RomMap.FX3)
     if len(rom) == 8 * MIB + 256 and rom[-256:] == b"\xFF" * 256:
         rom = rom[:-256]
     if len(rom) == 8 * MIB:
@@ -87,7 +205,9 @@ def normalize_fx3_rom(rom: bytes) -> bytes:
                 raise ValueError("invalid FX3 physical mirror region")
         rom = canonical
     validate_source(rom, RomMap.FX3)
-    if rom[0x7FD6] not in (0x17, 0x18) or rom[0x7FD7] != (len(rom) - 1).bit_length() - 10:
+    if source_header_score(rom, RomMap.FX3) < 8 or \
+            rom[0x7FD6] not in (FX3_TYPE, FX3_BATTERY_TYPE) or \
+            rom[0x7FD7] != (len(rom) - 1).bit_length() - 10:
         raise ValueError("FX3 requires ROM type $17/$18 and a matching header size")
     return rom
 
@@ -183,19 +303,23 @@ def build_bus_image(rom: bytes, mapping: RomMap) -> bytearray:
         if page is not None:
             image[address:address + PAGE_SIZE] = page
 
-    add_descriptor(image, mapping, len(rom))
+    add_descriptor(image, mapping, rom)
     return image
 
 
-def add_descriptor(image: bytearray, mapping: RomMap, source_size: int) -> None:
+def add_descriptor(image: bytearray, mapping: RomMap, rom: bytes) -> None:
     # Value 4 belongs to the descriptor-less Fx3Physical fallback in firmware.
     maps = (RomMap.LOROM, RomMap.HIROM, RomMap.EXLOROM, RomMap.EXHIROM, None, RomMap.FX3)
     if len(image) != BUS_IMAGE_SIZE or mapping not in maps:
         return
     mode = maps.index(mapping)
+    ram_size, cartridge_type = declared_sram(rom, mapping)
+    ram_code = 0 if not ram_size else ram_size.bit_length() - 11
+    attributes = 0x80000000 | cartridge_type << 16 | ram_code << 8 | mode
     magic = 0x504D3353
     image[DESCRIPTOR_ADDRESS:DESCRIPTOR_ADDRESS + 16] = struct.pack(
-        "<IIII", magic, mode, source_size, ~(magic ^ mode ^ source_size) & 0xFFFFFFFF
+        "<IIII", magic, attributes, len(rom),
+        ~(magic ^ attributes ^ len(rom)) & 0xFFFFFFFF
     )
 
 
@@ -211,8 +335,8 @@ def build_chip_image(rom: bytes, mapping: RomMap, chip_size: int) -> bytearray:
         rom = normalize_fx3_rom(rom)
     validate_source(rom, mapping)
 
-    if chip_size < 128 * KIB or chip_size > BUS_IMAGE_SIZE or chip_size & (chip_size - 1):
-        raise ValueError("parallel ROM size must be a power of two from 1 Mbit through 128 Mbit")
+    if chip_size < MIB or chip_size > BUS_IMAGE_SIZE or chip_size & (chip_size - 1):
+        raise ValueError("parallel ROM size must be a power of two from 8 Mbit through 128 Mbit")
 
     image = bytearray(b"\xFF") * chip_size
     assigned: dict[int, bytes] = {}
@@ -234,7 +358,7 @@ def build_chip_image(rom: bytes, mapping: RomMap, chip_size: int) -> bytearray:
         assigned[page_index] = page
         image[physical:physical + PAGE_SIZE] = page
 
-    add_descriptor(image, mapping, len(rom))
+    add_descriptor(image, mapping, rom)
     return image
 
 
@@ -248,11 +372,47 @@ def minimum_chip_size_mbit(rom: bytes, mapping: RomMap) -> int | None:
     return None
 
 
-def load_rom(path: Path) -> bytes:
-    rom = path.read_bytes()
-    if len(rom) % 0x8000 == 512:
-        rom = rom[512:]
-    return rom
+def minimum_mapping_size_mbit(rom_size: int, mapping: RomMap) -> int | None:
+    for size_mbit in CHIP_SIZE_MBIT_CHOICES:
+        chip_size = chip_size_bytes(size_mbit)
+        assigned: dict[int, int] = {}
+        fits = True
+        for address in range(0, BUS_IMAGE_SIZE, PAGE_SIZE):
+            source = rom_offset(mapping, address, rom_size)
+            if source is None:
+                continue
+            physical_page = (address & (chip_size - 1)) // PAGE_SIZE
+            source_page_index = source // PAGE_SIZE
+            previous = assigned.get(physical_page)
+            if previous is not None and previous != source_page_index:
+                fits = False
+                break
+            assigned[physical_page] = source_page_index
+        if fits:
+            return size_mbit
+    return None
+
+
+def infer_chip_size_mbit(rom: bytes, mapping: RomMap) -> int:
+    if mapping == RomMap.RAW:
+        for size_mbit in CHIP_SIZE_MBIT_CHOICES:
+            if len(rom) == chip_size_bytes(size_mbit):
+                return size_mbit
+        raise ImageCapacityError("raw image size does not match an 8, 16, 32, 64, or 128 Mbit ROM")
+
+    minimum = minimum_mapping_size_mbit(len(rom), mapping)
+    if minimum is None:
+        raise ImageCapacityError("ROM mapping does not fit any supported parallel ROM")
+    intended_size = declared_rom_size(rom, mapping) or 0
+    required_size = max(chip_size_bytes(minimum), intended_size)
+    for size_mbit in CHIP_SIZE_MBIT_CHOICES:
+        if chip_size_bytes(size_mbit) >= required_size:
+            return size_mbit
+    raise ImageCapacityError("ROM header declares a size larger than 128 Mbit")
+
+
+def load_rom(path: Path, mapping: RomMap) -> bytes:
+    return strip_copier_header(path.read_bytes(), mapping)
 
 
 def parse_args() -> argparse.Namespace:
@@ -273,8 +433,7 @@ def parse_args() -> argparse.Namespace:
         "--chip-size-mbit",
         type=int,
         choices=CHIP_SIZE_MBIT_CHOICES,
-        default=128,
-        help="capacity of the single parallel ROM in Mbit (default: 128)",
+        help="capacity of the single parallel ROM in Mbit (inferred when omitted)",
     )
     return parser.parse_args()
 
@@ -282,12 +441,19 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     mapping = RomMap(args.mapping)
-    rom = args.rom.read_bytes() if mapping == RomMap.RAW else load_rom(args.rom)
+    rom = args.rom.read_bytes() if mapping == RomMap.RAW else load_rom(args.rom, mapping)
     if args.fx_rom_output and mapping != RomMap.FX3:
         raise SystemExit("--fx-rom-output requires --map fx3")
     if mapping == RomMap.FX3:
         rom = normalize_fx3_rom(rom)
-    chip_size = chip_size_bytes(args.chip_size_mbit)
+    try:
+        size_mbit = args.chip_size_mbit if args.chip_size_mbit is not None else \
+            infer_chip_size_mbit(rom, mapping)
+        chip_size = chip_size_bytes(size_mbit)
+        if mapping == RomMap.RAW and len(rom) != chip_size:
+            raise ImageCapacityError("raw image size must exactly match the selected parallel ROM")
+    except (ImageCapacityError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
 
     try:
         image = build_chip_image(rom, mapping, chip_size)
@@ -305,6 +471,8 @@ def main() -> None:
     print(f"Map: {mapping.value}")
     print(f"Source ROM: {len(rom)} bytes")
     print(f"Parallel ROM: {args.output} ({len(image)} bytes)")
+    print(f"Device size: {size_mbit} Mbit"
+          f"{' (inferred)' if args.chip_size_mbit is None else ''}")
     if minimum is not None:
         print(f"Minimum device size: {minimum} Mbit")
 

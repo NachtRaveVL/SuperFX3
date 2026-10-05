@@ -8,6 +8,7 @@
 #include "qspi_rom.h"
 
 #include "snes_bus.h"
+#include "qspi_bus.h"
 #include "storage/fx3_qspi_layout.h"
 #include "hardware/flash.h"
 #include "hardware/regs/addressmap.h"
@@ -41,6 +42,10 @@ bool qspi_rom_program(void*, uint32_t offset, const uint8_t* data, uint32_t size
     if (!snes_bus_usb_mode() || !data || size != FLASH_SECTOR_SIZE ||
         offset % FLASH_SECTOR_SIZE != 0 || offset > fx3_qspi::FX_CODE_SIZE - size)
         return false;
+    if (!qspi_bus_try_acquire())
+        return false;
     RomSector sector{fx3_qspi::FX_CODE_OFFSET + offset, data, false};
-    return flash_safe_execute(program_sector, &sector, 1000) == PICO_OK && sector.ok;
+    const bool ok = flash_safe_execute(program_sector, &sector, 1000) == PICO_OK && sector.ok;
+    qspi_bus_release();
+    return ok;
 }

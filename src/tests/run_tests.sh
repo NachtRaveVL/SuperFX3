@@ -42,14 +42,21 @@ STORAGE_SOURCES=(
 
 PRODUCTION_SOURCES=(
     main.cpp
+    audio/fx3_audio_stream.cpp
+    video/fx3_video_stream.cpp
     "${CORE_SOURCES[@]}"
     "${STORAGE_SOURCES[@]}"
     platform/rp2350/fx_backend.cpp
+    platform/rp2350/fx3_audio_sd.cpp
+    platform/rp2350/fx3_video_sd.cpp
+    platform/rp2350/sd_audio_source.cpp
     platform/rp2350/fx_sync.cpp
     platform/rp2350/snes_bus.cpp
     platform/rp2350/snes_pio.cpp
     platform/rp2350/parallel_rom_gpio.cpp
     platform/rp2350/qspi_save.cpp
+    platform/rp2350/qspi_bus.cpp
+    platform/rp2350/qspi_sd.cpp
     platform/rp2350/qspi_rom.cpp
     usb/usb_descriptors.cpp
     usb/usb_rom_loader.cpp
@@ -105,8 +112,60 @@ build_bus_integration_tests() {
     "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
         tests/bus_integration_tests.cpp "${CORE_SOURCES[@]}" platform/rp2350/fx_sync.cpp \
         platform/rp2350/snes_bus.cpp platform/rp2350/snes_pio.cpp \
-        storage/snes_rom_layout.cpp \
+        audio/fx3_audio_stream.cpp video/fx3_video_stream.cpp storage/snes_rom_layout.cpp \
         -o "$BUILD/bus_integration_tests"
+}
+
+build_video_stream_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
+        -DSUPERFX3_AUDIO_SD=1 tests/video_stream_tests.cpp video/fx3_video_stream.cpp \
+        -o "$BUILD/video_stream_tests"
+}
+
+build_video_sync_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
+        -DSUPERFX3_AUDIO_SD=1 tests/video_sync_tests.cpp "${CORE_SOURCES[@]}" \
+        platform/rp2350/fx_sync.cpp -o "$BUILD/video_sync_tests"
+}
+
+build_audio_stream_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
+        -DSUPERFX3_AUDIO_SD=1 -DSDK_TEST_THREADED_CRITICAL_SECTIONS -pthread \
+        tests/audio_stream_tests.cpp \
+        audio/fx3_audio_stream.cpp -o "$BUILD/audio_stream_tests"
+}
+
+build_audio_sd_tests() {
+    local revision="$1"
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
+        -DSUPERFX3_BOARD_REVISION="$revision" tests/audio_sd_tests.cpp \
+        platform/rp2350/fx3_audio_sd.cpp platform/rp2350/sd_audio_source.cpp \
+        -o "$BUILD/audio_sd_tests_rev_$revision"
+}
+
+build_qspi_sd_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
+        -DSUPERFX3_AUDIO_SD=1 -DSUPERFX3_BOARD_REVISION=2 \
+        -DSDK_TEST_FLASH_EMULATION -DSDK_TEST_THREADED_CRITICAL_SECTIONS -pthread \
+        tests/qspi_sd_tests.cpp "${CORE_SOURCES[@]}" audio/fx3_audio_stream.cpp video/fx3_video_stream.cpp \
+        platform/rp2350/fx_sync.cpp platform/rp2350/snes_bus.cpp platform/rp2350/snes_pio.cpp \
+        platform/rp2350/qspi_bus.cpp platform/rp2350/qspi_sd.cpp platform/rp2350/qspi_save.cpp \
+        storage/fx3_save_journal.cpp -o "$BUILD/qspi_sd_tests"
+}
+
+build_sd_audio_source_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
+        -DSUPERFX3_AUDIO_SD=1 -DSUPERFX3_BOARD_REVISION=2 \
+        tests/sd_audio_source_tests.cpp audio/fx3_audio_stream.cpp \
+        platform/rp2350/fx3_audio_sd.cpp platform/rp2350/sd_audio_source.cpp \
+        -o "$BUILD/sd_audio_source_tests"
+}
+
+build_rev_b_bus_tests() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
+        -DSUPERFX3_BOARD_REVISION=2 tests/bus_integration_tests.cpp "${CORE_SOURCES[@]}" \
+        platform/rp2350/fx_sync.cpp platform/rp2350/snes_bus.cpp platform/rp2350/snes_pio.cpp \
+        audio/fx3_audio_stream.cpp video/fx3_video_stream.cpp storage/snes_rom_layout.cpp -o "$BUILD/rev_b_bus_tests"
 }
 
 build_fx_core_sanity() {
@@ -130,14 +189,14 @@ build_save_journal_tests() {
 build_qspi_save_integration_tests() {
     "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
         -DSDK_TEST_FLASH_EMULATION tests/qspi_save_integration_tests.cpp \
-        platform/rp2350/qspi_save.cpp storage/fx3_save_journal.cpp \
+        platform/rp2350/qspi_save.cpp platform/rp2350/qspi_bus.cpp storage/fx3_save_journal.cpp \
         -o "$BUILD/qspi_save_integration_tests"
 }
 
 build_save_stop_tests() {
     "$CXX" "${COMMON_FLAGS[@]}" "${TEST_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
         -DSDK_TEST_FLASH_EMULATION tests/save_stop_tests.cpp "${CORE_SOURCES[@]}" \
-        platform/rp2350/qspi_save.cpp storage/fx3_save_journal.cpp \
+        platform/rp2350/qspi_save.cpp platform/rp2350/qspi_bus.cpp storage/fx3_save_journal.cpp \
         -o "$BUILD/save_stop_tests"
 }
 
@@ -170,6 +229,7 @@ build_snes_rom_installer_tests() {
         -DSDK_TEST_FLASH_EMULATION -DSDK_TEST_FX_ROM_PROGRAMMING \
         tests/snes_rom_installer_tests.cpp "${STORAGE_SOURCES[@]}" \
         platform/rp2350/qspi_rom.cpp \
+        platform/rp2350/qspi_bus.cpp \
         -o "$BUILD/snes_rom_installer_tests"
 }
 
@@ -178,11 +238,18 @@ build_production_stub() {
         "${PRODUCTION_SOURCES[@]}" -o "$BUILD/superfx3_stub_link"
 }
 
+build_production_stub_rev_b() {
+    "$CXX" "${COMMON_FLAGS[@]}" "${PICO_INCLUDES[@]}" \
+        -DSUPERFX3_AUDIO_SD=1 -DSUPERFX3_BOARD_REVISION=2 \
+        "${PRODUCTION_SOURCES[@]}" -o "$BUILD/superfx3_rev_b_stub_link"
+}
+
 printf "Compiler: %s\n" "$("$CXX" --version | head -n 1)"
 
 echo
 echo "== Python/static tests =="
 run_stage "PIO static checks" python3 tests/pio_static_tests.py
+run_stage "Live SD SRAM audit checks" python3 tests/qspi_sd_sram_tests.py
 run_stage "QSPI image packer" python3 tests/packer_tests.py
 run_stage "QSPI/parallel storage separation" python3 tests/storage_separation_tests.py
 run_stage "SNES ROM bus image" python3 tests/snes_rom_image_tests.py
@@ -202,6 +269,23 @@ run_stage "CXX architectural_tests" build_core_test architectural_tests
 run_stage "RUN architectural_tests" "$BUILD/architectural_tests"
 run_stage "CXX bus_integration_tests" build_bus_integration_tests
 run_stage "RUN bus_integration_tests" "$BUILD/bus_integration_tests"
+run_stage "CXX video_stream_tests" build_video_stream_tests
+run_stage "RUN video_stream_tests" "$BUILD/video_stream_tests"
+run_stage "CXX video_sync_tests" build_video_sync_tests
+run_stage "RUN video_sync_tests" "$BUILD/video_sync_tests"
+run_stage "Video converter/integration" python3 tests/video_packer_tests.py
+run_stage "CXX audio_stream_tests" build_audio_stream_tests
+run_stage "RUN audio_stream_tests" "$BUILD/audio_stream_tests"
+run_stage "CXX Rev-A audio SD hooks" build_audio_sd_tests 1
+run_stage "RUN Rev-A audio SD hooks" "$BUILD/audio_sd_tests_rev_1"
+run_stage "CXX Rev-B audio SD hooks" build_audio_sd_tests 2
+run_stage "RUN Rev-B audio SD hooks" "$BUILD/audio_sd_tests_rev_2"
+run_stage "CXX Rev-B presence/reset" build_rev_b_bus_tests
+run_stage "RUN Rev-B presence/reset" "$BUILD/rev_b_bus_tests"
+run_stage "CXX shared QSPI/SD" build_qspi_sd_tests
+run_stage "RUN shared QSPI/SD" "$BUILD/qspi_sd_tests"
+run_stage "CXX SD/FAT audio source" build_sd_audio_source_tests
+run_stage "RUN SD/FAT audio source" "$BUILD/sd_audio_source_tests"
 
 echo
 echo "== Synchronization tests =="
@@ -239,7 +323,8 @@ run_stage "RUN NOR installer integration" "$BUILD/snes_rom_installer_tests"
 
 echo
 echo "== Full production strict stub link =="
-run_stage "CXX production stub link" build_production_stub
+run_stage "CXX Rev-A production stub link" build_production_stub
+run_stage "CXX Rev-B production stub link" build_production_stub_rev_b
 
 echo
 status "All host/static tests" "PASS"

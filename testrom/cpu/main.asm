@@ -83,10 +83,17 @@ DiagnosticPalette:
     .incbin "generated/palette.bin"
 DiagnosticPaletteEnd:
 
+.segment "EXHEADER"
+    .byte "NRFX3D"
+    .res 7, $00
+    .byte $07               ; 128 KiB FX SRAM
+    .byte $00               ; Special version
+    .byte $00               ; Chipset subtype
+
 .segment "HEADER"
     .byte "NR FX3 DIAGNOSTIC    "
     .byte $20               ; FX3 uses the LoROM header location.
-    .byte $17               ; FX3 without battery
+    .byte $18               ; FX3 with persistent SRAM
     .byte $0C               ; 3 MiB canonical ROM, rounded up to 4 MiB in the size field
     .byte $00               ; Standard header RAM size is unused
     .byte $01               ; North America

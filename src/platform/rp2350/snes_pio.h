@@ -11,7 +11,7 @@
 #include "../../storage/snes_rom_layout.h"
 
 /// Selects the installed ROM's SRAM windows while the bus is disconnected.
-void snes_pio_set_rom_map(SnesRomMap map);
+void snes_pio_set_rom_map(SnesRomMap map, uint32_t ram_size = 128u * 1024u);
 
 /// Starts the PIO state machines that monitor SNES bus transactions.
 void snes_pio_start(SuperFx& fx);
@@ -29,3 +29,7 @@ void snes_pio_sync_rom_ownership();
 bool snes_pio_reset_pending();
 /// Applies or queues a pending reset before later CPU writes; false requests a retry.
 bool snes_pio_service_reset();
+
+// Switch only the live Core-0 IRQ paths to their audited SRAM implementations.
+bool snes_pio_sd_begin();
+void snes_pio_sd_end();

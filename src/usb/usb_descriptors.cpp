@@ -19,7 +19,7 @@ constexpr uint16_t CONFIG_TOTAL_LEN = TUD_CONFIG_DESC_LEN + TUD_MSC_DESC_LEN;
 tusb_desc_device_t const DEVICE_DESCRIPTOR = {
     sizeof(tusb_desc_device_t), TUSB_DESC_DEVICE, 0x0200,
     0x00, 0x00, 0x00, CFG_TUD_ENDPOINT0_SIZE,
-    0x2E8A, 0x000A, 0x0100,
+    0x2E8A, 0x000A, 0x0101,
     0x01, 0x02, 0x03, 0x01,
 };
 

@@ -71,9 +71,19 @@ def test_bus_image() -> None:
 def test_header_strip() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         path = Path(temp_dir) / "headered.smc"
-        payload = b"\xA5" * 0x8000
+        payload = bytearray(b"\xA5" * 0x8000)
+        payload[0x7FC0:0x7FD5] = b" " * 21
+        payload[0x7FD5] = 0x20
+        payload[0x7FDC:0x7FE0] = b"\xCB\xED\x34\x12"
+        payload[0x7FFC:0x7FFE] = b"\x00\x80"
+        payload = bytes(payload)
         path.write_bytes(b"\x00" * 512 + payload)
-        require(tool.load_rom(path) == payload, "512-byte copier header was not stripped")
+        require(tool.load_rom(path, tool.RomMap.LOROM) == payload,
+                "validated 512-byte copier header was not stripped")
+        invalid = Path(temp_dir) / "invalid.smc"
+        invalid.write_bytes(b"\x00" * 512 + b"\xA5" * 0x8000)
+        require(tool.load_rom(invalid, tool.RomMap.LOROM) == invalid.read_bytes(),
+                "512 bytes were stripped without a valid shifted SNES header")
 
 
 
@@ -83,6 +93,34 @@ def patterned_rom(size: int) -> bytes:
         marker = (offset // tool.PAGE_SIZE).to_bytes(4, "little")
         rom[offset:offset + tool.PAGE_SIZE] = marker * (tool.PAGE_SIZE // len(marker))
     return bytes(rom)
+
+
+def test_capacity_inference() -> None:
+    rom = bytearray(patterned_rom(tool.MIB))
+    rom[0x7FC0:0x7FD5] = b" " * 21
+    rom[0x7FD5] = 0x20
+    rom[0x7FD7] = 0x0A
+    rom[0x7FDC:0x7FE0] = b"\xCB\xED\x34\x12"
+    rom[0x7FFC:0x7FFE] = b"\x00\x80"
+    require(tool.declared_rom_size(rom, tool.RomMap.LOROM) == tool.MIB,
+            "header ROM size code was not decoded")
+    require(tool.infer_chip_size_mbit(rom, tool.RomMap.LOROM) == 16,
+            "LoROM direct-bus mapping size was not included in inference")
+    rom[0x7FD7] = 0x0E
+    require(tool.declared_rom_size(rom, tool.RomMap.LOROM) == 16 * tool.MIB and
+                tool.infer_chip_size_mbit(rom, tool.RomMap.LOROM) == 128,
+            "header ROM size code $0E was not treated as 128 Mbit")
+
+    for size_mbit in tool.CHIP_SIZE_MBIT_CHOICES:
+        size = tool.chip_size_bytes(size_mbit)
+        require(tool.infer_chip_size_mbit(bytes(size), tool.RomMap.RAW) == size_mbit,
+                f"{size_mbit}-Mbit raw image size was not inferred")
+    try:
+        tool.infer_chip_size_mbit(bytes(tool.MIB + 1), tool.RomMap.RAW)
+    except tool.ImageCapacityError:
+        pass
+    else:
+        require(False, "non-device-sized raw image was inferred")
 
 
 def test_physical_capacity() -> None:
@@ -105,12 +143,12 @@ def test_small_device_capacity() -> None:
     lorom_128k = patterned_rom(128 * tool.KIB)
     hirom_128k = patterned_rom(128 * tool.KIB)
 
-    require(tool.minimum_chip_size_mbit(lorom_64k, tool.RomMap.LOROM) == 1,
-            "64 KiB LoROM did not fit the minimum 1-Mbit device")
-    require(tool.minimum_chip_size_mbit(lorom_128k, tool.RomMap.LOROM) == 2,
-            "128 KiB LoROM did not account for the striped 2-Mbit physical image")
-    require(tool.minimum_chip_size_mbit(hirom_128k, tool.RomMap.HIROM) == 1,
-            "128 KiB HiROM did not fit a 1-Mbit device")
+    require(tool.minimum_chip_size_mbit(lorom_64k, tool.RomMap.LOROM) == 8,
+            "64 KiB LoROM did not use the minimum supported 8-Mbit device")
+    require(tool.minimum_chip_size_mbit(lorom_128k, tool.RomMap.LOROM) == 8,
+            "128 KiB LoROM did not use the minimum supported 8-Mbit device")
+    require(tool.minimum_chip_size_mbit(hirom_128k, tool.RomMap.HIROM) == 8,
+            "128 KiB HiROM did not use the minimum supported 8-Mbit device")
 
 def test_superfx_extended() -> None:
     rom = patterned_rom(11 * tool.MIB)
@@ -149,10 +187,20 @@ def test_raw_128_mbit_rom() -> None:
     else:
         require(False, "conflicting 16 MiB raw bus image unexpectedly fit a 64-Mbit ROM")
 
+    for size_mbit in tool.CHIP_SIZE_MBIT_CHOICES:
+        size = tool.chip_size_bytes(size_mbit)
+        source = patterned_rom(size)
+        require(tool.build_chip_image(source, tool.RomMap.RAW, size) == source,
+                f"{size_mbit}-Mbit raw image did not preserve its full unique capacity")
+
 
 def test_fx3() -> None:
     rom = bytearray(patterned_rom(4 * tool.MIB))
-    rom[0x7FD6:0x7FD8] = b"\x18\x0C"
+    rom[0x7FC0:0x7FD5] = b" " * 21
+    rom[0x7FBD] = 0x07
+    rom[0x7FD5:0x7FD8] = b"\x20\x18\x0C"
+    rom[0x7FDC:0x7FE0] = b"\xCB\xED\x34\x12"
+    rom[0x7FFC:0x7FFE] = b"\x00\x80"
     rom = bytes(rom)
     image = tool.build_chip_image(rom, tool.RomMap.FX3, tool.BUS_IMAGE_SIZE)
     for bank in range(64):
@@ -163,18 +211,21 @@ def test_fx3() -> None:
     require(image[0x600000:0x700000] == rom[0x200000:0x300000], "FX3 third MiB changed")
     require(image[0x700000:0x7E0000] == rom[0x300000:0x3E0000], "FX3 SNES-only region changed")
     require(image[0xF00000:] == rom[0x300000:], "FX3 full SNES-only CPU mirror changed")
-    require(image[0x7E0000:0x7E0008] == b"S3MP\x05\x00\x00\x00", "FX3 descriptor missing")
+    require(image[0x7E0000:0x7E0008] == b"S3MP\x05\x07\x18\x80",
+            "FX3 descriptor omitted SRAM/type metadata")
     require(tool.fx3_payload(rom) == rom[:0x300000], "FX3 QSPI extraction changed bytes or included final MiB")
     with tempfile.TemporaryDirectory() as temp_dir:
         path = Path(temp_dir)
         (path / "game.sfc").write_bytes(rom)
         subprocess.run([sys.executable, str(TOOL_PATH), str(path / "game.sfc"),
-                        str(path / "parallel.bin"), "--map", "fx3", "--fx-rom-output",
-                        str(path / "fxrom.bin")], check=True, stdout=subprocess.DEVNULL)
+                        str(path / "parallel.bin"), "--map", "fx3", "--chip-size-mbit",
+                        "128", "--fx-rom-output", str(path / "fxrom.bin")],
+                       check=True, stdout=subprocess.DEVNULL)
         require((path / "parallel.bin").read_bytes() == image, "CLI FX3 parallel image differs")
         require((path / "fxrom.bin").read_bytes() == rom[:0x300000], "CLI FX ROM output differs")
     dump = image[:0x400000] + rom
-    for source in (rom, b"\x00" * 512 + rom, dump, dump + b"\xFF" * 256):
+    for source in (rom, b"\x00" * 512 + rom, dump, dump + b"\xFF" * 256,
+                   b"\x00" * 512 + dump + b"\xFF" * 256):
         require(tool.normalize_fx3_rom(source) == rom, "FX3 normalization failed")
         require(tool.fx3_payload(source) == rom[:0x300000], "FX3 dump payload differs")
     for offset in (0, 0x8000, 0x3FFFFF):
@@ -209,6 +260,7 @@ def main() -> None:
     test_offsets()
     test_bus_image()
     test_header_strip()
+    test_capacity_inference()
     test_physical_capacity()
     test_small_device_capacity()
     test_superfx_extended()

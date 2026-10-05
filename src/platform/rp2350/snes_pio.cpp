@@ -11,7 +11,10 @@
 // Generated from snes_bus.pio by pico_generate_pio_header(); do not hand-maintain.
 #include "snes_bus.pio.h"
 #include "snes_bus_layout.h"
+#include "audio/fx3_audio_stream.h"
+#include "video/fx3_video_stream.h"
 #include "fx_sync.h"
+#include "qspi_bus.h"
 
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
@@ -21,6 +24,12 @@
 #include "pico.h"
 #include "pico/sync.h"
 #include "pico/stdlib.h"
+#if SUPERFX3_AUDIO_SD
+#include "hardware/structs/scb.h"
+#include "hardware/structs/systick.h"
+#include "hardware/structs/m33_eppb.h"
+#include "hardware/regs/addressmap.h"
+#endif
 
 #ifndef SNES_FX3
 #error "This firmware requires PICO_BOARD=snes_fx3"
@@ -40,8 +49,12 @@ static std::atomic<bool> g_rom_blocked {false};
 
 static SuperFx* g_fx = nullptr;
 static SnesRomMap g_rom_map = SnesRomMap::Fx3Physical;
+static uint32_t g_ram_size = 128u * 1024u;
 
-void snes_pio_set_rom_map(SnesRomMap map) { g_rom_map = map; }
+void snes_pio_set_rom_map(SnesRomMap map, uint32_t ram_size) {
+    g_rom_map = map;
+    g_ram_size = ram_size <= 128u * 1024u ? ram_size : 128u * 1024u;
+}
 
 static uint g_control_sm = 0;
 static uint g_write_address_sm = 0;
@@ -74,12 +87,16 @@ static dma_channel_config g_write_address_dma_config {};
 static critical_section_t g_pio_gate;
 
 // Returns whether a bank participates in the normal GSU CPU-visible mapping.
-static inline bool snes_is_gsu_bank(uint8_t bank) {
+static __force_inline bool snes_is_gsu_bank(uint8_t bank) {
     return bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF);
 }
 
+static __force_inline bool snes_has_fx3_audio_map() {
+    return g_rom_map == SnesRomMap::Fx3 || g_rom_map == SnesRomMap::Fx3Physical;
+}
+
 // Returns whether an address is inside the active GSU/FX3 register window.
-static inline bool snes_is_gsu_register(const SuperFx& fx, uint32_t address) {
+static __force_inline bool snes_is_gsu_register(const SuperFx& fx, uint32_t address) {
     const uint8_t bank = static_cast<uint8_t>(address >> 16);
     if (!snes_is_gsu_bank(bank))
         return false;
@@ -95,7 +112,7 @@ static inline bool snes_is_gsu_register(const SuperFx& fx, uint32_t address) {
 }
 
 // Maps a SNES address to the linear shared-RAM offset used by the core.
-static inline bool snes_gsu_ram_offset(const SuperFx& fx, uint32_t address, uint32_t& offset) {
+static __force_inline bool snes_gsu_ram_offset(const SuperFx& fx, uint32_t address, uint32_t& offset) {
     const uint8_t bank = static_cast<uint8_t>(address >> 16);
     const uint16_t addr = static_cast<uint16_t>(address);
 
@@ -103,7 +120,9 @@ static inline bool snes_gsu_ram_offset(const SuperFx& fx, uint32_t address, uint
         // Extended LoROM needs the upper halves of $70/$71 for unique ROM.
         if ((bank & 0x7Fu) >= 0x70u && (bank & 0x7Fu) <= 0x7Du && addr < 0x8000u) {
             offset = ((static_cast<uint32_t>(bank & 3u) << 15) | addr);
-            return true;
+            if (g_ram_size)
+                offset &= g_ram_size - 1u;
+            return g_ram_size != 0;
         }
         return false;
     }
@@ -111,14 +130,18 @@ static inline bool snes_gsu_ram_offset(const SuperFx& fx, uint32_t address, uint
         if ((bank & 0x7Fu) >= 0x20u && (bank & 0x7Fu) <= 0x3Fu &&
             addr >= 0x6000u && addr < 0x8000u) {
             offset = (static_cast<uint32_t>(bank & 15u) << 13) | (addr & 0x1FFFu);
-            return true;
+            if (g_ram_size)
+                offset &= g_ram_size - 1u;
+            return g_ram_size != 0;
         }
         return false;
     }
 
     if (bank == 0x70 || bank == 0x71) {
         offset = (static_cast<uint32_t>(bank - 0x70) << 16) | addr;
-        return true;
+        if (g_ram_size)
+            offset &= g_ram_size - 1u;
+        return g_ram_size != 0;
     }
 
     if (fx.config().chip == FxChip::FX3)
@@ -127,17 +150,21 @@ static inline bool snes_gsu_ram_offset(const SuperFx& fx, uint32_t address, uint
     if ((bank <= 0x3E || (bank >= 0x80 && bank <= 0xBE)) &&
         addr >= 0x6000 && addr <= 0x7FFF) {
         offset = addr - 0x6000;
-        return true;
+        if (g_ram_size)
+            offset &= g_ram_size - 1u;
+        return g_ram_size != 0;
     }
 
     if (bank == 0xF0 || bank == 0xF1) {
         offset = (static_cast<uint32_t>(bank - 0xF0) << 16) | addr;
-        return true;
+        if (g_ram_size)
+            offset &= g_ram_size - 1u;
+        return g_ram_size != 0;
     }
     return false;
 }
 
-static inline uint32_t snes_read_response(uint8_t data) {
+static __force_inline uint32_t snes_read_response(uint8_t data) {
     return 1u |
            (static_cast<uint32_t>(snes_pack_data_raw(data)) << 1) |
            (static_cast<uint32_t>(SNES_CONTROL_SERVICE_READ) << READ_RESPONSE_CONTROL_SHIFT) |
@@ -161,7 +188,18 @@ static void __not_in_flash_func(snes_read_irq_handler)() {
         const uint16_t addr = static_cast<uint16_t>(address);
         uint32_t ram_offset = 0;
 
-        if (snes_is_gsu_register(*g_fx, address)) {
+        if (g_fx->config().chip == FxChip::FX3 && snes_has_fx3_audio_map() &&
+            snes_is_gsu_bank(bank) &&
+            fx3_audio_mmio_address(address)) {
+            response = snes_read_response(fx3_audio_host_read(addr));
+        } else if (g_fx->config().chip == FxChip::FX3 && snes_has_fx3_audio_map() &&
+                   snes_is_gsu_bank(bank) &&
+                   fx3_audio_hdma_address(address)) {
+            response = snes_read_response(fx3_audio_hdma_read(addr));
+        } else if (g_fx->config().chip == FxChip::FX3 && snes_has_fx3_audio_map() &&
+                   snes_is_gsu_bank(bank) && fx3_video_mmio_address(address)) {
+            response = snes_read_response(fx3_video_host_read(addr));
+        } else if (snes_is_gsu_register(*g_fx, address)) {
             response = snes_read_response(fx_sync_cpu_read(addr));
         } else if (snes_gsu_ram_offset(*g_fx, address, ram_offset)) {
             response = snes_read_response(fx_sync_cpu_ram_read(ram_offset));
@@ -201,7 +239,15 @@ static void __not_in_flash_func(snes_control_irq_handler)() {
         const uint16_t addr = static_cast<uint16_t>(address);
         uint32_t ram_offset = 0;
 
-        if (snes_is_gsu_register(*g_fx, address)) {
+        const uint8_t bank = static_cast<uint8_t>(address >> 16);
+        if (g_fx->config().chip == FxChip::FX3 && snes_has_fx3_audio_map() &&
+            snes_is_gsu_bank(bank) &&
+            fx3_audio_mmio_address(address)) {
+            fx3_audio_host_write(addr, data);
+        } else if (g_fx->config().chip == FxChip::FX3 && snes_has_fx3_audio_map() &&
+                   snes_is_gsu_bank(bank) && fx3_video_mmio_address(address)) {
+            fx3_video_host_write(addr, data);
+        } else if (snes_is_gsu_register(*g_fx, address)) {
             while (!fx_sync_cpu_write(addr, data))
                 tight_loop_contents();
         } else if (snes_gsu_ram_offset(*g_fx, address, ram_offset)) {
@@ -211,6 +257,119 @@ static void __not_in_flash_func(snes_control_irq_handler)() {
 
     pio_interrupt_clear(pio1, 1);
 }
+
+#if SUPERFX3_AUDIO_SD
+static uint64_t g_sd_irq_mask = 0;
+static uint32_t g_sd_systick = 0;
+static uint32_t g_sd_exception_pending = 0;
+
+static void __not_in_flash_func(snes_sd_read_irq_handler)() {
+    if (!pio_interrupt_get(pio2, 0))
+        return;
+    pio_interrupt_clear(pio2, 0);
+    const uint32_t address = snes_address_from_gpio(gpio_get_all64());
+    const uint8_t bank = static_cast<uint8_t>(address >> 16);
+    const uint16_t addr = static_cast<uint16_t>(address);
+    uint32_t offset = 0;
+    uint32_t response = 0;
+    if (snes_is_gsu_bank(bank) && fx3_audio_mmio_address(address))
+        response = snes_read_response(fx3_audio_host_read(addr));
+    else if (snes_is_gsu_bank(bank) && fx3_audio_hdma_address(address))
+        response = snes_read_response(fx3_audio_hdma_read(addr));
+    else if (snes_is_gsu_bank(bank) && fx3_video_mmio_address(address))
+        response = snes_read_response(fx3_video_host_read(addr));
+    else if (snes_is_gsu_register(*g_fx, address))
+        response = snes_read_response(fx_sync_sd_cpu_read(addr));
+    else if (snes_gsu_ram_offset(*g_fx, address, offset))
+        response = snes_read_response(fx_sync_sd_ram_read(offset));
+    else if (snes_is_gsu_bank(bank) && (addr & 0xF000u) == 0x7000u)
+        response = snes_read_response(0xFF);
+    pio_sm_put(pio2, g_read_sm, response);
+}
+
+static void __not_in_flash_func(snes_sd_control_irq_handler)() {
+    if (pio_interrupt_get(pio1, 2)) {
+        pio_interrupt_clear(pio1, 2);
+        fx_sync_sd_reset();
+        fx3_audio_request_reset();
+        fx3_video_request_reset();
+    }
+    if (!pio_interrupt_get(pio1, 1))
+        return;
+    const uint32_t captured = pio_sm_get(pio1, g_write_capture_sm);
+    if (gpio_get(SNES_I_RESET_N_PIN)) {
+        const uint32_t address = snes_unpack_address_raw(captured >> SNES_CAPTURE_ADDR_RAW_SHIFT);
+        const uint8_t data = snes_unpack_data_raw(static_cast<uint8_t>(captured));
+        const uint8_t bank = static_cast<uint8_t>(address >> 16);
+        const uint16_t addr = static_cast<uint16_t>(address);
+        uint32_t offset = 0;
+        if (snes_is_gsu_bank(bank) && fx3_audio_mmio_address(address))
+            fx3_audio_host_write(addr, data);
+        else if (snes_is_gsu_bank(bank) && fx3_video_mmio_address(address))
+            fx3_video_host_write(addr, data);
+        else if (snes_is_gsu_register(*g_fx, address)) {
+            while (!fx_sync_sd_cpu_write(addr, data))
+                __compiler_memory_barrier();
+        } else if (snes_gsu_ram_offset(*g_fx, address, offset))
+            fx_sync_sd_ram_write(offset, data);
+    }
+    pio_interrupt_clear(pio1, 1);
+}
+
+bool snes_pio_sd_begin() {
+    if (!g_pio_started.load(std::memory_order_acquire) ||
+        g_pio_paused.load(std::memory_order_acquire) ||
+        g_reset_pending.load(std::memory_order_acquire) || !snes_has_fx3_audio_map())
+        return false;
+#ifndef SUPERFX3_TEST
+    if (scb_hw->vtor < SRAM_BASE || scb_hw->vtor > SRAM_END - 512u ||
+        m33_eppb_hw->nmi_mask[0] || m33_eppb_hw->nmi_mask[1])
+        return false;
+#endif
+    const uint32_t interrupts = save_and_disable_interrupts();
+    if (!fx_sync_sd_begin()) {
+        restore_interrupts(interrupts);
+        return false;
+    }
+    g_sd_irq_mask = 0;
+    for (uint irq = 0; irq < NUM_IRQS; ++irq) {
+        if (irq_is_enabled(irq))
+            g_sd_irq_mask |= uint64_t{1} << irq;
+        irq_set_enabled(irq, false);
+    }
+    g_sd_systick = systick_hw->csr;
+    systick_hw->csr = 0;
+    // Disabling SysTick does not clear an already-pending system exception.
+    g_sd_exception_pending = scb_hw->icsr &
+        (M33_ICSR_PENDSTSET_BITS | M33_ICSR_PENDSVSET_BITS);
+    scb_hw->icsr = M33_ICSR_PENDSTCLR_BITS | M33_ICSR_PENDSVCLR_BITS;
+    const uint read_irq = pio_get_irq_num(pio2, 0);
+    const uint control_irq = pio_get_irq_num(pio1, 0);
+    irq_remove_handler(read_irq, snes_read_irq_handler);
+    irq_remove_handler(control_irq, snes_control_irq_handler);
+    irq_set_exclusive_handler(read_irq, snes_sd_read_irq_handler);
+    irq_set_exclusive_handler(control_irq, snes_sd_control_irq_handler);
+    irq_set_enabled(read_irq, true);
+    irq_set_enabled(control_irq, true);
+    restore_interrupts(interrupts);
+    return true;
+}
+
+void snes_pio_sd_end() {
+    const uint32_t interrupts = save_and_disable_interrupts();
+    const uint read_irq = pio_get_irq_num(pio2, 0);
+    const uint control_irq = pio_get_irq_num(pio1, 0);
+    irq_remove_handler(read_irq, snes_sd_read_irq_handler);
+    irq_remove_handler(control_irq, snes_sd_control_irq_handler);
+    irq_set_exclusive_handler(read_irq, snes_read_irq_handler);
+    irq_set_exclusive_handler(control_irq, snes_control_irq_handler);
+    systick_hw->csr = g_sd_systick;
+    scb_hw->icsr = g_sd_exception_pending;
+    for (uint irq = 0; irq < NUM_IRQS; ++irq)
+        irq_set_enabled(irq, (g_sd_irq_mask & (uint64_t{1} << irq)) != 0);
+    restore_interrupts(interrupts);
+}
+#endif
 
 static uint snes_claim_sm(PIO pio) {
     const int sm = pio_claim_unused_sm(pio, true);
@@ -479,8 +638,11 @@ bool __not_in_flash_func(snes_pio_service_reset)() {
     bool accepted = true;
     if (g_reset_pending.load(std::memory_order_acquire)) {
         accepted = fx_sync_reset();
-        if (accepted)
+        if (accepted) {
+            fx3_audio_request_reset();
+            fx3_video_request_reset();
             g_reset_pending.store(false, std::memory_order_release);
+        }
     }
     restore_interrupts(irq_state);
     return accepted;

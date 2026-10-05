@@ -11,7 +11,7 @@ static_assert(fx3_save::PAYLOAD_SIZE == 128u * 1024u && fx3_save::HEADER_SIZE ==
 static_assert(fx3_save::SLOT_COUNT == 4 && 4u * fx3_save::SLOT_SIZE == 528u * 1024u &&
               fx3_qspi::SAVE_OFFSET == 0x07C000u &&
               fx3_qspi::SAVE_OFFSET + 4u * fx3_save::SLOT_SIZE == 0x100000u,
-              "Four snapshots must fit exactly before the unchanged FX-code partition.");
+              "Four snapshots must fit exactly before the unchanged FX-ROM partition.");
 
 struct TestFlash {
     std::vector<uint8_t> bytes = std::vector<uint8_t>(fx3_qspi::FLASH_SIZE, 0xFF);
@@ -181,7 +181,7 @@ static void test_four_snapshots_and_destination_only_wrap() {
                      std::equal(before.begin() + fx3_qspi::SAVE_OFFSET + fx3_save::SLOT_SIZE,
                                 before.end(),
                                 storage.bytes.begin() + fx3_qspi::SAVE_OFFSET + fx3_save::SLOT_SIZE),
-                 "wrap modified another slot, firmware, or FX code");
+                 "wrap modified another slot, firmware, or FX ROM");
     test_require(fx3_save::restore(flash, output.data(), output.size()) && output == next,
                  "restore did not select the post-wrap snapshot");
 }

@@ -2,7 +2,7 @@
 
 SuperFX3 FOSS firmware for RP2350B-based SNES cartridges utilizing NR-RetroWorks developed interfacing.
 
-**SuperFX3 Firmware v0.10.1**
+**SuperFX3 Firmware v0.10.2**
 
 This project implements the Super FX / GSU processor family in firmware, with SuperFX3 as the current hardware target. The RP2350B handles the SNES cartridge bus, runs the GSU core, and provides shared RAM plus FX-visible ROM storage.
 
@@ -31,11 +31,13 @@ Hardware is currently in prototype phase and work continues on hardware validati
   * Lower 496 KiB for firmware
   * 528 KiB append-only SRAM save journal
     * 4 rotating saves for wear leveling
-  * Upper 3 MiB for FX-visible game ROM
+  * Upper 3 MiB for FX-visible game ROM (lower 3 MiB ROM copy)
 * Separate parallel flash ROM for the SNES CPU
-  * One TSOP48/56 device on a single `/ROM_CE` output
-  * 8-128 Mbit device capacity with full A0-A23 routing
+  * 8-128 Mbit TSOP48/56 device capacity with full A0-A23 routing
   * LoROM, HiROM, ExLoROM, ExHiROM, FX3, and raw bus images
+* SD card A/V streaming
+  * Full-screen video with synchronized SPC700 audio
+  * Standalone voice-over and dialogue playback
 * FX3 2/4/8bpp PLOT/RPIX pixel-cache graphics path with programmable SCBR and native SNES planar output
 * Planar-only framebuffer path with no separate chunky framebuffer
   * FX3 MERGE C2P commands are skipped because PLOT writeback already produces planar data
@@ -61,9 +63,9 @@ The RP2350B splits the work between both cores:
 
 PIO handles the timing-sensitive bus work, including SuperFX address decoding, SNES write capture, read service, and bus-control changes.
 
-Banks `$70-$71` map to 128 KiB of RP2350 SRAM. The default planar framebuffer lives in bank `$71`; SCMR and SCBR retain the normal 2/4/8bpp mode and base-selection behavior. The FX3 processor reads its FX-visible game ROM from the upper 3 MiB QSPI partition.
+The RP2350 provides 128 KiB of physical shared SRAM behind banks `$70-$71`. The SNES-visible window follows the installed ROM header's SRAM-size declaration and mirrors smaller SRAM sizes through that window, while the GSU retains the full physical backing. The default planar framebuffer lives in bank `$71`; SCMR and SCBR retain the normal 2/4/8bpp mode and base-selection behavior. The FX3 processor reads its FX-visible game ROM from the upper 3 MiB QSPI partition.
 
-One canonical FX3 game ROM supplies both devices: parallel NOR stores the SNES-visible mapping, and QSPI stores the 3 MiB GSU-visible window. Smaller ROMs are mirrored into that window; a 4 MiB ROM's final MiB is SNES-only. The SNES address bus reaches the 128-Mbit NOR directly while PIO controls `/RD`, `/WR`, and `/ROM_CE`. ROM images are arranged for the physical flash layout before programming so normal CPU reads do not require live address remapping.
+One canonical FX3 game ROM supplies both devices: parallel NOR stores the SNES-visible mapping, and QSPI stores the 3 MiB GSU-visible window. Smaller ROMs are mirrored into that window; a 4 MiB ROM's final MiB is SNES-only. The SNES address bus reaches the selected 8-128 Mbit NOR directly while PIO controls `/RD`, `/WR`, and `/ROM_CE`. A 128-Mbit device uses A23 and provides 16 MiB of distinct physical storage; smaller devices naturally alias bus addresses above their fitted capacity. ROM images are arranged for the detected physical layout before programming so normal CPU reads do not require live address remapping.
 
 ---
 
@@ -85,29 +87,109 @@ The production routed map is implemented by the board definition, explicit bit p
 
 Signal | RP2350B GPIO | Description
 --- | --- | ---
-`/SNES_PRES` | GPIO0 | Active-low powered-console detection
+`/SNES_PRES` (Rev A/deprecated), `/SD_CS` (Rev B) | GPIO0 | Rev-A active-low presence; Rev-B SD chip-select
 `/RD`, `/WR`, `/ROM_CE` | GPIO1-GPIO3 | RP2350 outputs to the single parallel ROM
 `/A_OE`, `/C_OE`, `D_DIR`, `/D_OE` | GPIO4-GPIO7 | Address, control, and data translator/transceiver controls
 `I_A0-I_A23` | GPIO8-GPIO31 | Routed address inputs; physical order is explicitly packed/unpacked
-`/I_IRQ`, `/I_CART`, `/I_RD`, `/I_WR`, `/I_RST`, `I_CLK` | GPIO32-GPIO37 | Translated console inputs
+`/I_IRQ` (Rev A/deprecated), `SNES_PRES` (Rev B) | GPIO32 | Rev-A IRQ input; Rev-B active-high presence
+`/I_CART`, `/I_RD`, `/I_WR`, `/I_RST`, `I_CLK` | GPIO33-GPIO37 | Translated console inputs
 `/O_IRQ`, `/O_RST` | GPIO38-GPIO39 | Cartridge outputs through the open-drain buffer path
 `I_D0-I_D7` | GPIO40-GPIO47 | Routed data bus; physical order is explicitly packed/unpacked
 
-`/I_RD` and `/I_WR` are input-only observations of console cycles. GPIO1 `/RD` and GPIO2 `/WR` are the outputs that actually strobe the ROM. When `/C_OE` is disabled, firmware locally drives `/I_RST` so the RP2350-side reset net never floats; it releases `/I_RST` back to input before re-enabling `/C_OE`.
+`/I_RD` and `/I_WR` are input-only observations of console cycles. GPIO1 `/RD` and GPIO2 `/WR` are the outputs that actually strobe the ROM. When `/C_OE` is disabled, Rev A locally drives `/I_RST` so the RP2350-side reset net never floats, then releases it before re-enabling `/C_OE`. Rev B keeps `/I_RST` input-only and drives `/O_RST` for local reset. `/O_IRQ` remains on both revisions.
 
-`/SNES_PRES` selects the operating mode. Low selects normal SNES operation. High selects USB programming mode, stops every SNES PIO watcher, disables `/A_OE`, `/C_OE`, and `/D_OE`, drives `/I_RST` locally, and mounts the TinyUSB mass-storage ROM loader.
+Presence selects the operating mode: Rev A detects a console with GPIO0 low; Rev B detects it with GPIO32 high. Without a console, USB programming mode stops every SNES PIO watcher, disables `/A_OE`, `/C_OE`, and `/D_OE`, uses the board's local reset output, and mounts the TinyUSB mass-storage ROM loader.
+
+## SD Card A/V Layer
+
+Rev B adds SD card support for audio/video. Build with `-DSUPERFX3_BOARD_REVISION=B`. GPIO0 is SD CS; GPIO32 is active-high SNES_PRES.
+
+SD is read-only: SDSC/SDHC/SDXC, FAT16/FAT32, direct volume or MBR partition, hexadecimal 8.3 filenames. Missing or unsupported media reports an error without crashing the GSU.
+
+Control registers use banks `$00-$3F/$80-$BF`:
+
+- Audio: `$7F00-$7F33`; HDMA tables `$6000-$6FFE`, empty terminator `$6FFF`.
+- Video: `$7F40-$7F5F`; DMA pages `$71:0000` and `$71:8000`.
+
+Audio uses `/audio/XXXX.brr`, 16 kHz mono, a 32 KiB FIFO and four HDMA pages. Set `$7F03` bit 0 for PAL. At VBlank, report SPC fill and claim one page; otherwise release with `$FF` and select the empty table. Never replay a table. STOP/errors retain ACTIVE data until release. Temporary reads retry while starvation inserts silence and reports UNDERRUN.
+
+FMV uses 256×224 Mode-1 BG1, 4bpp/16 colors. The Pico decompresses and validates frames into two 32 KiB pages in bank `$71`. Playback requires a stopped GSU. Upload during VBlank, flip completed frames on the SPC audio clock, and drop expired frames. Disable DMA/HDMA, release the session and wait for GSU unlock before restarting it.
+
+Requires FFmpeg/FFprobe and Pillow:
+
+```bash
+python3 src/tools/make_fx3_video.py intro.mp4 --output sd --asset-id 0001
+```
+
+Copy the generated `video/0001.fmv` and `audio/0001.brr` to SD. Default: 6 fps, 3584 DMA bytes/VBlank. Compact frames can use `--fps 20`; oversized frames are rejected. PAL: `--refresh 50 --fps 5`. `--silent` uses VBlank timing.
+
+SD, saves and installation share QSPI ownership. SD exchanges use SRAM bus service with PIO interrupts active and GSU writes deferred. Rev B adds approximately 37 KiB of audio buffers; target linking, and stack headroom.
+
+Addresses are mirrored in banks `$00-$3F/$80-$BF`. Access is from the SNES CPU.
+All registers use byte accesses; multibyte values are little-endian.
+
+### Audio control
+
+| Address | Access | Register | Meaning |
+|---|---|---|---|
+| `$7F00` | W | Command | 0 STOP, 1 PLAY, 2 PAUSE, 3 RESUME. Reads return `$FF`. |
+| `$7F01-$7F02` | R/W | Asset ID | 16-bit ID selecting `/audio/XXXX.brr`; latched when the command is written. |
+| `$7F03` | R/W | Flags | Bit 0: PAL/50 Hz when set, NTSC when clear. |
+| `$7F04` | R | Status | 0 idle, 1 opening, 2 priming, 3 playing, 4 draining, 5 EOF, 6 error, 7 underrun, 8 paused. |
+| `$7F05` | R/W | Error | 0 none, 1 unavailable, 2 open failed, 3 read failed, 4 partial BRR block, 5 busy, 6 invalid command, 7 command queue full, 8 FIFO underrun. Write 0 to clear the code. |
+| `$7F06` | R/W | HDMA page | Read offered page 0–3, or `$FF` if none. Write offered page to claim/replace ACTIVE; write `$FF` to release. |
+| `$7F07` | R | First strobe | First packet sequence in the offered page; `$FF` if none. |
+| `$7F08` | R/W | SPC fill | Host-reported queued 252-byte segments, clamped to 0–8. Claims are blocked at 7 or above. |
+| `$7F09` | W | Event | 1 page missed, 2 packet missed, 3 SPC underrun, 4 SPC overrun. Increments the corresponding counter. |
+| `$7F0A` | R | Last strobe | Last packet sequence in the offered page; `$FF` if none. |
+| `$7F0B-$7F0F` | — | Reserved | Reads return `$FF`; writes ignored. |
+| `$7F10-$7F13` | R | Source reads | 32-bit read-attempt count, including retries and EOF. |
+| `$7F14-$7F17` | R | Source bytes | 32-bit count of bytes received. |
+| `$7F18-$7F1B` | R | FIFO low-water | Minimum queued bytes since PLAY. |
+| `$7F1C-$7F1F` | R | Pages built | 32-bit HDMA page count. |
+| `$7F20-$7F23` | R | Pages missed | Rejected claims plus host-reported page misses. |
+| `$7F24-$7F27` | R | Packets sent | Packets contained in claimed pages. |
+| `$7F28-$7F2B` | R | Packets missed | Host-reported packet misses. |
+| `$7F2C-$7F2F` | R | SPC underruns | Host-reported underruns. |
+| `$7F30-$7F33` | R | SPC overruns | Host-reported overruns. |
+| `$6000-$6FFE` | R | HDMA tables | Page bases: `$6000`, `$6400`, `$6800`, `$6C00`. |
+| `$6FFF` | R | Empty table | Always returns `$00`, terminating HDMA. |
+
+Report SPC fill before claiming a page at VBlank. Never replay the previous
+table. STOP/errors retain ACTIVE until release. Strobes wrap modulo 256;
+check the offered-page register before interpreting `$FF`. Counters are live,
+unlatched byte reads.
+
+### Video control
+
+| Address | Access | Register | Meaning |
+|---|---|---|---|
+| `$7F40` | R/W | Command | Write 0 STOP, 1 PLAY, 2 RELEASE. Read pending command, or `$FF` when none is queued. |
+| `$7F41-$7F42` | R/W | Asset ID | 16-bit ID selecting `/video/XXXX.fmv`; latched when the command is written. |
+| `$7F43` | R | Status | 0 idle, 1 opening, 2 streaming, 3 EOF, 4 error. |
+| `$7F44` | R | Error | 0 none, 1 unavailable, 2 busy, 3 open failed, 4 read failed, 5 invalid format, 6 bad CRC. |
+| `$7F45` | R/W | Offered page | Read page 0–1, or `$FF` if none. Write offered page to claim/replace ACTIVE; write `$FF` to release ACTIVE. |
+| `$7F46` | R | ACTIVE page | Currently claimed page 0–1, or `$FF` if none. |
+| `$7F47` | R | Flags | Bit 0: paired audio. Bit 7: GSU locked for video. |
+| `$7F48-$7F4B` | R | Frame timestamp | 32-bit presentation time in milliseconds. |
+| `$7F4C-$7F4D` | R | Tile bytes | 16-bit tile-data length. |
+| `$7F4E-$7F4F` | R | Frame bytes | 16-bit decoded length: tiles + 1792-byte map + 32-byte palette. |
+| `$7F50-$7F53` | R | Movie duration | 32-bit duration in milliseconds. |
+| `$7F54-$7F57` | R | Frame count | 32-bit total frame count. |
+| `$7F58` | R | Format revision | Returns 1. |
+| `$7F59-$7F5B` | — | Reserved | Reads return `$FF`; writes ignored. |
+| `$7F5C-$7F5F` | R | Frame duration | 32-bit duration in milliseconds. |
+
+Claim the offered page before reading frame metadata. DMA sources are
+`$71:0000` for page 0 and `$71:8000` for page 1; data remains immutable while ACTIVE.
+
+STOP retains ACTIVE and the GSU lock. To finish, disable DMA/HDMA, issue RELEASE,
+and wait for `$7F47` bit 7 to clear. EOF means staging has finished, not that the
+last frame has been displayed.
 
 ---
 
-# Building
-
-## External Libraries
-
-SuperFX3 uses the following controller-side library:
-
-* **TinyUSB** for USB device and mass-storage support.
-
-External libraries are supplied through the Pico SDK checkout. Pico SDK submodules must be initialized when setting up the SDK.
+# Compilation
 
 ## Requirements
 
@@ -118,12 +200,32 @@ External libraries are supplied through the Pico SDK checkout. Pico SDK submodul
 * GNU `g++` for the host/static test suite
 * `gcov` for optional coverage reporting
 * cc65 with `ca65` and `ld65` for the diagnostic ROM
+* ffmpeg/pillow for a/v support
 
 Set `PICO_SDK_PATH` if needed:
 
 ```bash
 export PICO_SDK_PATH="$HOME/pico/pico-sdk"
 ```
+
+### External Libraries
+
+SuperFX3 uses the following controller-side library:
+
+* **TinyUSB** for USB device and mass-storage support.
+
+External libraries are supplied through the Pico SDK checkout.
+
+### A/V Support
+
+On Ubuntu/Debian WSL, install the required A/V support tools via:
+
+```bash
+sudo apt install ffmpeg
+python3 -m pip install Pillow
+```
+
+## Building
 
 Configure and build from the repository root:
 
@@ -197,25 +299,27 @@ python3 src/tools/make_snes_rom_image.py \
     --chip-size-mbit 128
 ```
 
-The device may be 8, 16, 32, 64, or 128 Mbit. The image tool rejects mappings that alias conflicting data at the selected capacity.
+The device may be 8, 16, 32, 64, or 128 Mbit. Pass `--chip-size-mbit` to select it explicitly. When omitted, the tool checks a validated internal SNES header, the normalized file size, and the selected map's direct-bus alias requirements, then chooses the smallest supported device that satisfies all of them. Header ROM-size codes use the standard `2^N` KiB encoding through `$0E`, which denotes 128 Mbit. Raw images infer capacity only from an exact supported file size. Ambiguous, conflicting, or oversized inputs are rejected instead of defaulting to 128 Mbit.
+
+The output size always equals the selected device capacity. Raw images can use every byte uniquely, including both A23 halves of a 128-Mbit device. Mapped formats duplicate bytes only where the selected SNES mapping defines a mirror. The packer does not mask A23 on a 128-Mbit target.
 
 Supported mappings are `lorom`, `hirom`, `exlorom`, `exhirom`, `fx3`, `superfx-extended`, and `raw`. A 512-byte copier header is removed automatically for mapped SNES ROMs. `superfx-extended` retains the unrelated 11 MiB Snes9x layout; production FX3 uses `fx3`.
 
-`--map fx3` accepts canonical ROMs up to 4 MiB (type `$17`/`$18`) or a validated 8 MiB production dump, optionally followed by 256 erased bytes. Both copies of every 32 KiB block in the dump's first 4 MiB must match the first 2 MiB of its canonical second half. The 16 MiB parallel image explicitly fills both A23 halves: duplicated 32 KiB blocks at `$00-$3F`/`$80-$BF`, the shared linear window at `$40-$6F`, and the full canonical window at `$C0-$FF`. Physical bytes beneath `$70/$71` SRAM never replace its CPU overlay; `$7E/$7F` remain WRAM. Add `--fx-rom-output build/game_fxrom.bin` to generate the complete 3 MiB QSPI FX window, mirroring smaller ROMs with SNES-style mirroring.
+`--map fx3` accepts canonical ROMs up to 4 MiB (type `$17`/`$18`) or a validated 8 MiB production dump, optionally followed by 256 erased bytes. Both copies of every 32 KiB block in the dump's first 4 MiB must match the first 2 MiB of its canonical second half. On a 128-Mbit device, the 16 MiB image explicitly programs both A23 halves: duplicated 32 KiB blocks at `$00-$3F`/`$80-$BF`, the shared linear window at `$40-$6F`, and the full canonical window at `$C0-$FF`. These repetitions are FX3 CPU-map mirrors, not a physical A23 alias. Physical bytes beneath `$70/$71` SRAM never replace its CPU overlay; `$7E/$7F` remain WRAM. Add `--fx-rom-output build/game_fxrom.bin` to generate the complete 3 MiB QSPI FX window, mirroring smaller ROMs with SNES-style mirroring.
 
 Programming images are padded to the selected physical ROM capacity with `0xFF`. The default FX3/raw profile retains full SRAM banks `$70-$71`. Installed ExLoROM instead uses the low halves of `$70-$7D`/`$F0-$FD` for SRAM; their upper halves remain ROM. ExHiROM uses `$20-$3F`/`$A0-$BF:$6000-$7FFF` for SRAM, with FX3 registers still available in `$00-$1F`/`$80-$9F`. These extended profiles cannot simultaneously provide the original full-bank `$71` framebuffer window. Both extended profiles allow ROM reads in `$72-$7D`.
 
-Mapped 128-Mbit images carry a 16-byte `S3MP` map descriptor at physical `0x7E0000`, a SNES WRAM address that cannot expose cartridge ROM. Both the offline packer and USB installer emit it, and firmware reads it before enabling console translators. Raw images without a valid descriptor use the default FX3 profile.
+Mapped 128-Mbit images carry a 16-byte `S3MP` descriptor with the map, canonical ROM size, declared SRAM size, and cartridge type at physical `0x7E0000`, a SNES WRAM address that cannot expose cartridge ROM. Both the offline packer and USB installer emit it, and firmware reads it before enabling console translators. Smaller devices and raw images also use a validated bus-visible SNES header for SRAM/type metadata; images without either retain the default FX3 profile.
 
 ## USB drag-and-drop programming
 
-With the cartridge powered only by USB (which puts `/SNES_PRES` high), the firmware exposes a FAT16 drive named `SUPERFX3`. Copy one LoROM, HiROM, ExLoROM, or ExHiROM `.sfc`/`.smc` source image up to 8 MiB, or a ready-to-flash 16 MiB `.rom`/`.bin` physical bus image, to that drive. Then **safely eject the drive, keeping USB power connected until `/O_IRQ` is released**. Eject finalizes the FAT chain and starts installation; an ordinary cache flush or temporary file size does not. The loader validates mapped SNES headers, constructs the direct 24-bit cartridge-bus image, and programs/verifies the IS29GL128 as required. A safe eject is not yet confirmation that NOR programming has finished.
+With the cartridge powered only by USB (presence inactive), the firmware exposes a FAT12/FAT16 drive named `SUPERFX3`. Copy one LoROM, HiROM, ExLoROM, ExHiROM, or FX3 `.sfc`/`.smc` source image that fits the installed device, or a ready-to-flash `.rom`/`.bin` image exactly matching its physical capacity. Then **safely eject the drive, keeping USB power connected until `/O_IRQ` is released**. Eject finalizes the FAT chain and starts installation; an ordinary cache flush or temporary file size does not. The loader reads CFI geometry, accepts uniform 128 KiB-sector devices from 8 through 128 Mbit, constructs the direct cartridge-bus image, and programs/verifies the complete detected capacity. A safe eject is not yet confirmation that NOR programming has finished.
 
 USB also accepts canonical FX3 `.sfc`/`.smc` files and validated production dumps, including the optional 256-byte erased trailer. FX3 installation programs/verifies the full 3 MiB FX-visible window in QSPI at `0x100000`, then the parallel image, and commits the descriptor last. SDK flash lockout parks Core 1 and disables local interrupts during each QSPI sector write. Firmware and saves remain untouched. Ordinary ROM and raw-image uploads still change only parallel NOR. Interrupting a two-device installation can leave a mismatched pair; re-upload the ROM to recover.
 
-Data sectors are retained by physical cluster even when they precede directory or FAT updates. The volume advertises only space that can be staged: 16 MiB of parallel flash plus 16 KiB of temporary SRAM for allocation overhead. Repeated sector writes use a read/modify/erase/program cache. Fragmented chains are reordered without losing unread pages; heavy fragmentation can substantially increase programming time. One ROM per mount is supported. Copying begins a destructive replacement of the previous ROM; disconnecting or losing power partway through requires uploading again. This is not an atomic firmware-update mechanism.
+Data sectors are retained by physical cluster even when they precede directory or FAT updates. The volume size follows the detected parallel flash capacity and includes 16 KiB of temporary SRAM for allocation overhead. Repeated sector writes use a read/modify/erase/program cache. Fragmented chains are reordered without losing unread pages; heavy fragmentation can substantially increase programming time. One ROM per mount is supported. Copying begins a destructive replacement of the previous ROM; disconnecting or losing power partway through requires uploading again. This is not an atomic firmware-update mechanism.
 
-A 512-byte copier header is detected from the file size (`size mod 32 KiB == 512`) and stripped regardless of the filename extension. The loader does not shift an unheadered file merely because it uses `.smc`.
+A 512-byte copier header is selected only when the shifted SNES header validates better than the unshifted candidate. Detection checks checksum/complement, map mode, reset vector, title plausibility, and FX3 type/size where applicable. The filename extension and size remainder alone never cause a shift. Raw `.rom`/`.bin` images remain byte-exact.
 
 Parallel-flash writes use the byte-mode AMD/JEDEC command protocol with `AAA/555` unlock addresses, DQ7 data polling, DQ5 timeout handling, 128 KiB sector erase, and read-back verification. Mapped uploads use the parallel NOR itself as overlap-safe temporary storage. `/O_IRQ` remains asserted throughout receive/program work and is released on every completion or failure path. If a powered SNES appears, programming aborts before the firmware reconnects the console bus.
 
@@ -246,7 +350,7 @@ The save journal, starting at `0x07C000`, holds four 132 KiB slots, each contain
 
 `ALT3; STOP` drains pending memory activity, stops the GSU, and saves from Core 1 while Core 0 is parked. Only SRAM/ROM-safe code executes while XIP is unavailable. After verification, XIP and Core 0 resume, R15 becomes zero, and the GSU stays stopped. Official FX3 uses R15 polling; compatibility profiles may assert a completion IRQ. Saves require no busy IRQ, USB connection, or save-and-continue behavior.
 
-Failure leaves the GSU stopped with nonzero R15 and no new completion IRQ. Firmware exposes the result through `save_failed` and `qspi_save_last_ok()`; guest software should use a timeout and explicitly restart after recovery. Reset/disconnect saves remain serialized fallbacks. Saves never modify firmware, FX code, or parallel ROM.
+Failure leaves the GSU stopped with nonzero R15 and no new completion IRQ. Firmware exposes the result through `save_failed` and `qspi_save_last_ok()`; guest software should use a timeout and explicitly restart after recovery. Reset/disconnect saves remain serialized fallbacks. Cartridge type `$17` disables persistence, while `$18` enables it; a disabled SAVE_AND_STOP is a successful no-op. The journal format remains a complete 128 KiB snapshot even when the CPU-visible SRAM declaration is smaller. Saves never modify firmware, FX ROM, or parallel ROM.
 
 **Wait for save completion before removing power.** Sudden power loss cannot trigger a reliable save. The journal stores one cartridge-wide SRAM image, without per-game slots.
 

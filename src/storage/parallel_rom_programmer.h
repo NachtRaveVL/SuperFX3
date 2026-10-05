@@ -27,14 +27,17 @@ struct ParallelRomId {
 
 class ParallelRomProgrammer {
 public:
-    static constexpr uint32_t CAPACITY = 16u * 1024u * 1024u;
+    static constexpr uint32_t MIN_CAPACITY = 1u * 1024u * 1024u;
+    static constexpr uint32_t MAX_CAPACITY = 16u * 1024u * 1024u;
     static constexpr uint32_t SECTOR_SIZE = 128u * 1024u;
 
     explicit ParallelRomProgrammer(const ParallelRomBus& bus);
 
     void reset() const;
     ParallelRomId read_id() const;
-    bool is_supported_device() const;
+    bool probe();
+    bool is_supported_device() { return probe(); }
+    uint32_t capacity() const { return capacity_; }
     bool erase_chip(uint64_t timeout_us = 180000000u) const;
     bool erase_sector(uint32_t address, uint64_t timeout_us = 2000000u) const;
     bool program_byte(uint32_t address, uint8_t data,
@@ -46,4 +49,5 @@ private:
     void command(uint32_t address, uint8_t data) const;
 
     ParallelRomBus bus_;
+    uint32_t capacity_ = 0;
 };

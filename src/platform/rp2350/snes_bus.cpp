@@ -11,6 +11,8 @@
 #include "snes_bus_layout.h"
 #include "snes_pio.h"
 #include "fx_sync.h"
+#include "audio/fx3_audio_stream.h"
+#include "video/fx3_video_stream.h"
 
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
@@ -46,28 +48,45 @@ static void snes_local_control(uint8_t word) {
     }
 }
 
-static bool snes_console_detected() {
-    return !gpio_get(SNES_PRES_N_PIN);
+static bool __not_in_flash_func(snes_console_detected)() {
+    return gpio_get(SNES_PRES_PIN) == SNES_PRES_ACTIVE_LEVEL;
 }
 
-// /I_RD and /I_WR are translated inputs only. The one exception in this
-// group is /I_RST: with /C_OE disabled it is locally driven so it cannot float.
+// /I_RD and /I_WR are translated inputs only. Rev A drives /I_RST locally
+// with /C_OE disabled; Rev B leaves /I_RST input-only and drives /O_RST.
 static void snes_take_local_reset() {
     gpio_set_dir_masked64(SNES_I_CONTROL_MASK, 0);
+#if SUPERFX3_BOARD_REVISION == 1
     gpio_put(SNES_I_RESET_N_PIN, 0);
     gpio_set_dir(SNES_I_RESET_N_PIN, GPIO_OUT);
+#else
+    gpio_put(SNES_O_RESET_N_PIN, 0);
+#endif
+}
+
+static void snes_release_local_reset() {
+#if SUPERFX3_BOARD_REVISION == 1
+    gpio_put(SNES_I_RESET_N_PIN, 1);
+#else
+    gpio_put(SNES_O_RESET_N_PIN, 1);
+#endif
 }
 
 static void snes_release_local_reset_to_console() {
+#if SUPERFX3_BOARD_REVISION == 2
+    snes_release_local_reset();
+#endif
     gpio_set_dir(SNES_I_RESET_N_PIN, GPIO_IN);
     gpio_set_dir_masked64(SNES_I_CONTROL_MASK, 0);
 }
 
 static void snes_enter_standalone() {
+    fx3_audio_request_reset();
+    fx3_video_request_reset();
     if (g_started)
         snes_pio_stop();
 
-    // Disable every translator before taking local ownership of /I_RST.
+    // Disable every translator before asserting the local reset output.
     // GPIO1/2 remain the only /RD and /WR outputs to the physical ROM.
     snes_local_control(SNES_CONTROL_STANDALONE);
     snes_take_local_reset();
@@ -75,7 +94,7 @@ static void snes_enter_standalone() {
         while (!fx_sync_reset())
             tight_loop_contents();
     }
-    gpio_put(SNES_I_RESET_N_PIN, 1);
+    snes_release_local_reset();
 
     g_bus_request.store(false, std::memory_order_release);
     g_bus_granted.store(false, std::memory_order_release);
@@ -83,7 +102,7 @@ static void snes_enter_standalone() {
 }
 
 static void snes_enter_console() {
-    // /C_OE is still disabled here. Release /I_RST and all other translated
+    // /C_OE is still disabled here. Release local reset and all translated
     // inputs before snes_pio_resume() enables /C_OE in its idle control word.
     snes_local_control(SNES_CONTROL_STANDALONE);
     snes_release_local_reset_to_console();
@@ -106,9 +125,16 @@ void snes_bus_init() {
     g_started = false;
     g_console_present = false;
 
-    gpio_init(SNES_PRES_N_PIN);
-    gpio_set_dir(SNES_PRES_N_PIN, GPIO_IN);
-    gpio_pull_up(SNES_PRES_N_PIN);
+    gpio_init(SNES_PRES_PIN);
+    gpio_set_dir(SNES_PRES_PIN, GPIO_IN);
+#if SUPERFX3_BOARD_REVISION == 1
+    gpio_pull_up(SNES_PRES_PIN);
+#else
+    gpio_pull_down(SNES_PRES_PIN);
+    gpio_init(SNES_SD_CS_N_PIN);
+    gpio_put(SNES_SD_CS_N_PIN, 1);
+    gpio_set_dir(SNES_SD_CS_N_PIN, GPIO_OUT);
+#endif
 
     for (uint pin = SNES_ADDR_RAW_BASE;
          pin < SNES_ADDR_RAW_BASE + SNES_ADDR_RAW_COUNT; ++pin) {
@@ -122,7 +148,7 @@ void snes_bus_init() {
         gpio_disable_pulls(pin);
         gpio_set_dir(pin, GPIO_IN);
     }
-    for (uint pin = SNES_I_IRQ_N_PIN; pin <= SNES_I_CLK_PIN; ++pin) {
+    for (uint pin = SNES_I_CONTROL_BASE; pin <= SNES_I_CLK_PIN; ++pin) {
         gpio_init(pin);
         gpio_set_dir(pin, GPIO_IN);
         gpio_pull_up(pin);
@@ -142,12 +168,12 @@ void snes_bus_init() {
     gpio_put(SNES_O_RESET_N_PIN, 1);
     gpio_set_dir(SNES_O_RESET_N_PIN, GPIO_OUT);
 
-    // /C_OE is disabled, so explicitly drive /I_RST inactive rather than
-    // leaving the RP2350-side control net floating. /I_RD and /I_WR stay inputs.
+    // /C_OE is disabled, so explicitly release the board's local reset output.
+    // /I_RD and /I_WR stay inputs; Rev B also keeps /I_RST input-only.
     snes_take_local_reset();
-    gpio_put(SNES_I_RESET_N_PIN, 1);
+    snes_release_local_reset();
 
-    // The single 128-Mbit-capable parallel ROM is rated for 100 ns.
+    // Supported parallel ROMs have a worst-case 100 ns random-read time.
     const uint32_t sys_hz = clock_get_hz(clk_sys);
     g_rom_access_cycles = ((sys_hz + 9999999u) / 10000000u) + 2;
     g_rom_address_setup_cycles = ((sys_hz + 49999999u) / 50000000u) + 1;
@@ -188,7 +214,7 @@ void snes_busy_irq_write(void*, bool asserted) {
 uint8_t snes_rom_read(void* context, uint32_t address) {
     (void)context;
 
-    // FX3 executes private code from QSPI and must never steal the parallel bus.
+    // FX3 executes from the QSPI GSU-visible ROM and must never steal the parallel bus.
     if (!g_console_present || (g_fx && g_fx->config().chip == FxChip::FX3))
         return 0xFF;
 

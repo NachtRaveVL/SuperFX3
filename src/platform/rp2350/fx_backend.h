@@ -31,3 +31,6 @@ uint8_t fx3_qspi_rom_read(void* context, uint32_t offset);
 
 /// Builds the callback table used by the portable SuperFX core.
 FxBackend fx_backend_create(Rp2350FxBackendContext* context);
+
+/// Validates the production SRAM callbacks/context used during a live SD window.
+bool fx_backend_sd_safe(const FxBackend& backend);

@@ -14,7 +14,7 @@ constexpr char README_TEXT[] =
     "SuperFX3 USB ROM loader\r\n"
     "\r\n"
     "Copy one LoROM/HiROM/ExLoROM/ExHiROM/FX3 .sfc/.smc,\r\n"
-    "or a ready-to-flash 16 MiB .rom/.bin physical bus image.\r\n"
+    "or a full-device .rom/.bin physical bus image.\r\n"
     "After copying, safely EJECT the drive to install. Keep USB power on\r\n"
     "until programming finishes and /O_IRQ is released.\r\n"
     "Keep the cartridge out of a powered SNES while this drive is mounted.\r\n"
@@ -46,13 +46,28 @@ UsbRomVolume::UsbRomVolume(const UsbRomSink& sink) : sink_(sink) {
     reset();
 }
 
+void UsbRomVolume::set_capacity(uint32_t capacity) {
+    capacity_ = capacity;
+    staging_pages_ = capacity / PAGE_SIZE + 4u;
+    block_count_ = FIRST_UPLOAD_BLOCK + staging_pages_ * SECTORS_PER_CLUSTER;
+    fat12_ = staging_pages_ + 1u < 4085u;
+    reset();
+}
+
 void UsbRomVolume::reset() {
     memset(fat_, 0, sizeof(fat_));
     memset(root_, 0, sizeof(root_));
     memset(received_, 0, sizeof(received_));
-    put16(fat_, 0, 0xFFF8);
-    put16(fat_, 2, 0xFFFF);
-    put16(fat_, README_CLUSTER * 2u, 0xFFFF);
+    if (fat12_) {
+        fat_[0] = 0xF8;
+        fat_[1] = 0xFF;
+        fat_[2] = 0xFF;
+        set_fat_entry(README_CLUSTER, 0x0FFFu);
+    } else {
+        put16(fat_, 0, 0xFFF8);
+        put16(fat_, 2, 0xFFFF);
+        set_fat_entry(README_CLUSTER, 0xFFFFu);
+    }
 
     // Volume label and a one-cluster readme leave cluster 3 as the first free cluster.
     memcpy(root_, "SUPERFX3    ", 11);
@@ -66,11 +81,30 @@ void UsbRomVolume::reset() {
     completion_sent_ = false;
 }
 
+void UsbRomVolume::set_fat_entry(uint16_t cluster, uint16_t value) {
+    if (!fat12_) {
+        put16(fat_, static_cast<size_t>(cluster) * 2u, value);
+        return;
+    }
+    const size_t offset = cluster + cluster / 2u;
+    if (cluster & 1u) {
+        fat_[offset] = static_cast<uint8_t>((fat_[offset] & 0x0Fu) | (value << 4));
+        fat_[offset + 1u] = static_cast<uint8_t>(value >> 4);
+    } else {
+        fat_[offset] = static_cast<uint8_t>(value);
+        fat_[offset + 1u] = static_cast<uint8_t>((fat_[offset + 1u] & 0xF0u) |
+                                                 ((value >> 8) & 0x0Fu));
+    }
+}
+
 uint16_t UsbRomVolume::fat_entry(uint16_t cluster) const {
-    const size_t offset = static_cast<size_t>(cluster) * 2u;
+    const size_t offset = fat12_ ? cluster + cluster / 2u :
+        static_cast<size_t>(cluster) * 2u;
     if (offset + 1u >= sizeof(fat_))
         return 0;
-    return get16(fat_, offset);
+    const uint16_t value = get16(fat_, offset);
+    return fat12_ ? static_cast<uint16_t>((cluster & 1u ? value >> 4 : value) & 0x0FFFu) :
+        value;
 }
 
 bool UsbRomVolume::flush() {
@@ -103,13 +137,13 @@ bool UsbRomVolume::eject() {
         return false;
 
     const uint32_t size = get32(selected, 28);
-    if (!size || size > MAX_FILE_SIZE)
+    if (!size || size > capacity_ + MAX_SOURCE_OVERHEAD)
         return false;
     const uint32_t count = (size + PAGE_SIZE - 1u) / PAGE_SIZE;
     uint16_t cluster = get16(selected, 26);
     uint32_t remaining = size;
     for (uint32_t page = 0; page < count; ++page) {
-        if (cluster < 3 || cluster >= 3u + STAGING_PAGES)
+        if (cluster < 3 || cluster >= 3u + staging_pages_)
             return false;
         const uint16_t physical = static_cast<uint16_t>(cluster - 3u);
         for (uint32_t previous = 0; previous < page; ++previous) {
@@ -125,7 +159,7 @@ bool UsbRomVolume::eject() {
         remaining -= bytes;
         cluster = fat_entry(cluster);
     }
-    if (cluster < 0xFFF8u || !flush())
+    if (cluster < (fat12_ ? 0x0FF8u : 0xFFF8u) || !flush())
         return false;
     const UsbRomFileType type = memcmp(selected + 8, "SMC", 3) == 0 ?
         UsbRomFileType::Smc : (memcmp(selected + 8, "SFC", 3) == 0 ?
@@ -135,7 +169,7 @@ bool UsbRomVolume::eject() {
 }
 
 bool UsbRomVolume::read(uint32_t lba, uint8_t* data, size_t size) const {
-    if (!data || size != BLOCK_SIZE || lba >= BLOCK_COUNT)
+    if (!data || size != BLOCK_SIZE || lba >= block_count_)
         return false;
     memset(data, 0, size);
     if (lba == 0) {
@@ -151,11 +185,11 @@ bool UsbRomVolume::read(uint32_t lba, uint8_t* data, size_t size) const {
         put16(data, 22, FAT_SECTORS);
         put16(data, 24, 32);
         put16(data, 26, 64);
-        put32(data, 32, BLOCK_COUNT);
+        put32(data, 32, block_count_);
         data[36] = 0x80; data[38] = 0x29;
         put32(data, 39, 0x53335833u);
         memcpy(data + 43, "SUPERFX3   ", 11);
-        memcpy(data + 54, "FAT16   ", 8);
+        memcpy(data + 54, fat12_ ? "FAT12   " : "FAT16   ", 8);
         data[510] = 0x55; data[511] = 0xAA;
         return true;
     }
@@ -194,7 +228,7 @@ bool UsbRomVolume::read(uint32_t lba, uint8_t* data, size_t size) const {
 }
 
 bool UsbRomVolume::write(uint32_t lba, const uint8_t* data, size_t size) {
-    if (!data || size != BLOCK_SIZE || lba >= BLOCK_COUNT || completion_sent_)
+    if (!data || size != BLOCK_SIZE || lba >= block_count_ || completion_sent_)
         return false;
     if (lba >= FAT1_START && lba < FAT1_START + FAT_SECTORS) {
         memcpy(fat_ + (lba - FAT1_START) * BLOCK_SIZE, data, BLOCK_SIZE);

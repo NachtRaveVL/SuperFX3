@@ -18,6 +18,9 @@ enum class SnesRomMap : uint8_t {
     Fx3, // Canonical FX3 ROM, up to 4 MiB; the first 3 MiB are FX-visible.
 };
 
+constexpr uint8_t SNES_CARTRIDGE_FX3 = 0x17u;
+constexpr uint8_t SNES_CARTRIDGE_FX3_BATTERY = 0x18u;
+
 struct SnesRomReader {
     void* context;
     uint8_t (*read)(void* context, uint32_t offset);
@@ -27,6 +30,8 @@ struct SnesRomInfo {
     SnesRomMap map;
     uint32_t size;
     uint32_t data_offset;
+    uint32_t ram_size = 128u * 1024u;
+    uint8_t cartridge_type = SNES_CARTRIDGE_FX3_BATTERY;
 };
 
 /// Detects LoROM/HiROM/ExLoROM/ExHiROM and canonical or striped FX3 ROMs.
@@ -41,4 +46,6 @@ bool snes_rom_source_offset(const SnesRomInfo& info, uint32_t bus_address,
 constexpr uint32_t SNES_ROM_DESCRIPTOR_ADDRESS = 0x7E0000u;
 constexpr uint32_t SNES_ROM_DESCRIPTOR_SIZE = 16u;
 void snes_rom_descriptor(const SnesRomInfo& info, uint8_t* bytes);
+SnesRomInfo snes_rom_installed_info(const SnesRomReader& physical);
 SnesRomMap snes_rom_installed_map(const SnesRomReader& physical);
+bool snes_rom_has_persistent_ram(const SnesRomInfo& info);

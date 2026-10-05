@@ -9,6 +9,9 @@
 
 #include "fx_sync.h"
 #include "snes_pio.h"
+#include "qspi_bus.h"
+#include "fx_backend.h"
+#include "hardware/regs/addressmap.h"
 
 #include "pico.h"
 #include "pico/sync.h"
@@ -46,17 +49,22 @@ static std::atomic<bool> g_command_overflow {false};
 
 static critical_section_t g_state_gate;
 static std::atomic<bool> g_core1_owns_fx {false};
+static std::atomic<bool> g_video_owns_ram {false};
 static std::atomic<bool> g_irq_clear_pending {false};
 static std::atomic<uint32_t> g_runtime_snapshot {0};
 static std::atomic<uint32_t> g_access_snapshot {FX_SYNC_ACCESS_ROM | FX_SYNC_ACCESS_RAM};
+#if SUPERFX3_AUDIO_SD
+static std::atomic<bool> g_sd_reset {false};
+static std::atomic<uint32_t> g_sd_reset_position {0};
+#endif
 
 // Enters the short cross-core gate used when ownership of FxState can change.
-static inline void fx_sync_lock_state() {
+static __force_inline void fx_sync_lock_state() {
     critical_section_enter_blocking(&g_state_gate);
 }
 
 // Leaves the short cross-core FxState ownership gate.
-static inline void fx_sync_unlock_state() {
+static __force_inline void fx_sync_unlock_state() {
     critical_section_exit(&g_state_gate);
 }
 
@@ -163,7 +171,11 @@ void fx_sync_init(SuperFx& fx, const FxBackend& backend) {
     critical_section_init(&g_state_gate);
 
     g_core1_owns_fx.store(false, std::memory_order_relaxed);
+    g_video_owns_ram.store(false, std::memory_order_relaxed);
     g_irq_clear_pending.store(false, std::memory_order_relaxed);
+#if SUPERFX3_AUDIO_SD
+    g_sd_reset.store(false, std::memory_order_relaxed);
+#endif
 
     fx_sync_publish_state();
 }
@@ -322,6 +334,11 @@ uint8_t __not_in_flash_func(fx_sync_cpu_read)(uint16_t addr) {
 bool __not_in_flash_func(fx_sync_cpu_write)(uint16_t addr, uint8_t value) {
     fx_sync_lock_state();
 
+    if (g_video_owns_ram.load(std::memory_order_acquire)) {
+        fx_sync_unlock_state();
+        return true;
+    }
+
     if (g_core1_owns_fx.load(std::memory_order_relaxed)) {
         // Queue every register write while core 1 owns state_. SuperFx::cpu_write()
         // applies the architectural running-state restrictions when the command
@@ -366,6 +383,11 @@ uint8_t __not_in_flash_func(fx_sync_cpu_ram_read)(uint32_t addr) {
 
 void __not_in_flash_func(fx_sync_cpu_ram_write)(uint32_t addr, uint8_t value) {
     fx_sync_lock_state();
+
+    if (addr >= 0x10000u && g_video_owns_ram.load(std::memory_order_acquire)) {
+        fx_sync_unlock_state();
+        return;
+    }
 
     if (!g_core1_owns_fx.load(std::memory_order_relaxed)) {
         g_fx->cpu_ram_write(addr, value);
@@ -447,4 +469,98 @@ bool fx_sync_reset() {
 
     fx_sync_unlock_state();
     return true;
+}
+
+#if SUPERFX3_AUDIO_SD
+bool fx_sync_sd_begin() {
+    fx_sync_lock_state();
+    bool safe = g_fx && g_fx->config().chip == FxChip::FX3;
+#ifndef SUPERFX3_TEST
+    const uintptr_t state = reinterpret_cast<uintptr_t>(g_fx);
+    safe = safe && state >= SRAM_BASE && state <= SRAM_END - sizeof(SuperFx) &&
+        fx_backend_sd_safe(g_backend);
+#endif
+    if (safe) {
+        g_core1_owns_fx.store(true, std::memory_order_release);
+        fx_sync_publish_state();
+    }
+    fx_sync_unlock_state();
+    return safe;
+}
+
+uint8_t __not_in_flash_func(fx_sync_sd_cpu_read)(uint16_t addr) {
+    fx_sync_lock_state();
+    const uint8_t value = g_fx->cpu_read(addr);
+    fx_sync_unlock_state();
+    return value;
+}
+
+bool __not_in_flash_func(fx_sync_sd_cpu_write)(uint16_t addr, uint8_t value) {
+    if (g_video_owns_ram.load(std::memory_order_acquire)) return true;
+    const bool queued = fx_sync_queue_command(FxSyncCommandType::CpuWrite, addr, value);
+    const uint32_t used = (g_command_write.load(std::memory_order_acquire) -
+                          g_command_read.load(std::memory_order_acquire)) & FX_SYNC_COMMAND_MASK;
+    if (!queued || used >= FX_SYNC_COMMAND_COUNT / 2u)
+        qspi_bus_audio_cancel();
+    return queued;
+}
+
+uint8_t __not_in_flash_func(fx_sync_sd_ram_read)(uint32_t addr) {
+    return g_backend.ram_read ? g_backend.ram_read(g_backend.context, addr) : 0xFF;
+}
+
+void __not_in_flash_func(fx_sync_sd_ram_write)(uint32_t addr, uint8_t value) {
+    if (addr >= 0x10000u && g_video_owns_ram.load(std::memory_order_acquire)) return;
+    if (g_backend.ram_write)
+        g_backend.ram_write(g_backend.context, addr, value);
+}
+
+void __not_in_flash_func(fx_sync_sd_reset)() {
+    if (!fx_sync_queue_command(FxSyncCommandType::Reset)) {
+        g_sd_reset_position.store(g_command_write.load(std::memory_order_acquire),
+                                 std::memory_order_relaxed);
+        g_sd_reset.store(true, std::memory_order_release);
+    }
+    qspi_bus_audio_cancel();
+}
+
+void fx_sync_sd_drain_writes() {
+    // Called on core 1 only after XIP is restored. Do not execute guest instructions here.
+    FxSyncCommand command {};
+    for (uint32_t i = 0; i <= FX_SYNC_COMMAND_COUNT; ++i) {
+        if (g_sd_reset.load(std::memory_order_acquire) &&
+            g_command_read.load(std::memory_order_acquire) ==
+                g_sd_reset_position.load(std::memory_order_relaxed)) {
+            fx_sync_lock_state();
+            g_fx->reset();
+            fx_sync_publish_state();
+            fx_sync_unlock_state();
+            g_sd_reset.store(false, std::memory_order_release);
+        }
+        if (i == FX_SYNC_COMMAND_COUNT || !fx_sync_pop_command(command))
+            break;
+        fx_sync_lock_state();
+        if (command.type == FxSyncCommandType::Reset)
+            g_fx->reset();
+        else
+            g_fx->cpu_write(command.addr, command.value);
+        fx_sync_publish_state();
+        fx_sync_unlock_state();
+    }
+}
+#endif
+
+bool fx_sync_video_acquire() {
+    fx_sync_lock_state();
+    const bool available = g_fx && g_fx->config().chip == FxChip::FX3 && !g_fx->running() &&
+        !g_core1_owns_fx.load(std::memory_order_relaxed) &&
+        !g_video_owns_ram.load(std::memory_order_relaxed) &&
+        g_command_read.load(std::memory_order_acquire) == g_command_write.load(std::memory_order_acquire);
+    if (available) g_video_owns_ram.store(true, std::memory_order_release);
+    fx_sync_unlock_state();
+    return available;
+}
+
+void fx_sync_video_release() {
+    g_video_owns_ram.store(false, std::memory_order_release);
 }
