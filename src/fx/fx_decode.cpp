@@ -18,6 +18,7 @@ void SuperFx::execute_opcode(uint8_t opcode) {
             switch (reg) {
                 case 0x0:
                     op_stop();
+                    reset_prefix();
                     break;
 
                 case 0x1:
@@ -156,9 +157,10 @@ void SuperFx::execute_opcode(uint8_t opcode) {
 
         // $70-$7F: MERGE / AND / BIC
         case 0x7:
-            if (reg == 0)
+            if (reg == 0) {
                 op_merge();
-            else
+                reset_prefix();
+            } else
                 op_and_bic(reg);
             break;
 
